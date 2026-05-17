@@ -1,8 +1,8 @@
 # OshiPlan テスト仕様書
 
-推し活遠征プランナーアプリ
+推し活遠征プランナーWebサービス
 
-2026年5月 / Version 1.0 (MVP)
+2026年5月 / Version 2.0
 
 ---
 
@@ -10,18 +10,22 @@
 
 ### 0.1 目的
 
-- MVPリリース前に機能・セキュリティ・性能の品質を担保する
+- MVPリリース前に機能・セキュリティ・SEO・性能の品質を担保する
 - 個人開発のため、自動化できるテストを優先し、手動確認は最小限にする
 
 ### 0.2 テスト種別と優先度
 
 | 種別 | 対象 | 自動化 | 優先度 |
 |------|------|--------|--------|
-| 単体テスト（Unit） | バリデーション・ビジネスロジック | ✅ Jest / Vitest | 高 |
-| APIテスト（Integration） | 各エンドポイント 正常系・異常系 | ✅ Supertest / Hono Test | 高 |
-| E2Eテスト | 主要ユーザーフロー | 手動（Expo Go） | 高 |
-| セキュリティテスト | 認証・認可・RLS | 手動＋自動 | 高 |
-| 性能テスト | AI生成レスポンスタイム | 手動計測 | 中 |
+| 単体テスト（Unit） | バリデーション・ビジネスロジック | ✅ Vitest | 高 |
+| APIテスト（Integration） | 各エンドポイント 正常系・異常系 | ✅ Vitest + fetch mock | 高 |
+| E2Eテスト | 主要ユーザーフロー | ✅ **Playwright**（ブラウザ） | 高 |
+| SEOテスト | OGP・Schema.org・Core Web Vitals | ✅ Playwright + Lighthouse CI | 高 |
+| セキュリティテスト | 認証・認可・RLS・アフィリエイト不正 | 手動＋自動 | 高 |
+| アフィリエイトテスト | リンク生成・クリック計測 | ✅ Vitest | 高 |
+| 性能テスト | ページロード・AI生成レスポンスタイム | 手動計測 + Lighthouse | 中 |
+
+> **変更点（旧仕様との差異）**: E2EをExpo Go（モバイル手動）からPlaywright（ブラウザ自動）に変更。SEOテストとアフィリエイトテストを新規追加。RevenueCat関連テストを削除。
 
 ### 0.3 テストID体系
 
@@ -29,16 +33,18 @@
 T-[カテゴリ]-[連番]
 
 カテゴリ:
-  UNIT   単体テスト
-  AUTH   認証・認可API
-  USER   ユーザーAPI
-  ART    推し（Artists）API
-  PLAN   プランAPI
-  SHARE  共有プランAPI
-  HOOK   Webhook
-  SEC    セキュリティ
-  PERF   性能
-  E2E    E2Eシナリオ
+  UNIT    単体テスト
+  AUTH    認証・認可API
+  USER    ユーザーAPI
+  ART     推し（Artists）API
+  PLAN    プランAPI
+  SHARE   共有プランAPI
+  AFF     アフィリエイトAPI・機能
+  VENUE   会場API・ページ
+  SEC     セキュリティ
+  SEO     SEO・OGP
+  PERF    性能
+  E2E     E2Eシナリオ
 ```
 
 ### 0.4 合否基準
@@ -47,9 +53,10 @@ T-[カテゴリ]-[連番]
 |------|---------|
 | 単体テスト | カバレッジ 80%以上、全テストPASS |
 | APIテスト | 全正常系PASS、主要異常系PASS |
-| E2Eテスト | 主要シナリオ（E2E-01〜04）が手動で通ること |
-| セキュリティ | 全SECテスト PASS |
-| 性能テスト | AI生成 10秒以内、その他API 500ms以内（p95） |
+| E2Eテスト | E2E-01〜05 が全てPASS |
+| SEOテスト | Core Web Vitals グリーン、OGP正常表示 |
+| セキュリティ | 全SEC・AFFテスト PASS |
+| 性能テスト | AI生成 10秒以内、LCP 2.5秒以内 |
 
 ---
 
@@ -60,29 +67,28 @@ T-[カテゴリ]-[連番]
 | 環境 | URL | DB | 用途 |
 |------|-----|----|------|
 | ローカル | `http://localhost:3000` | Supabase Local (Docker) | 開発・単体テスト |
-| Staging | `https://staging.api.oshiplan.app` | Supabase Staging Project | APIテスト・E2Eテスト |
-| 本番 | `https://api.oshiplan.app` | Supabase Production | リリース後スモークテスト |
+| Staging | `https://staging.oshiplan.app` | Supabase Staging Project | APIテスト・E2Eテスト |
+| 本番 | `https://oshiplan.app` | Supabase Production | スモークテスト |
 
 ### 1.2 テストデータ
 
 ```
-テストユーザー（Free）
-  email: test-free@oshiplan.test
+テストユーザー（ログイン済み）
+  email: test@oshiplan.test
   password: TestPass123!
-  subscription_tier: free
-  monthly_ai_used: 0
-
-テストユーザー（Premium）
-  email: test-premium@oshiplan.test
-  password: TestPass123!
-  subscription_tier: premium_monthly
-
-テスト推し
-  name: テスト推し A
-  category: idol
+  daily_ai_used: 0
 
 別ユーザー（アクセス制御確認用）
-  email: other-user@oshiplan.test
+  email: other@oshiplan.test
+
+ゲスト（未ログイン）
+  IPアドレス: テスト用固定IP
+  daily_ai_used: 0
+
+テスト会場
+  slug: tokyo-dome
+  name: 東京ドーム
+  rakuten_area_code: "test-area"
 ```
 
 ---
@@ -95,125 +101,68 @@ T-[カテゴリ]-[連番]
 |---------|---------|------|---------|
 | T-UNIT-01 | 正常なplan_jsonはバリデーション通過 | 全フィールドが正しい形式 | PASS |
 | T-UNIT-02 | itineraryが空配列は失敗 | `itinerary: []` | `ZodError` |
-| T-UNIT-03 | itinerary timeが不正形式は失敗 | `time: "7:30"` (0埋めなし) | `ZodError` |
-| T-UNIT-04 | estimated_costが負数は失敗 | `estimated_cost: -1` | `ZodError` |
-| T-UNIT-05 | accommodationがnullは通過 | `accommodation: null` | PASS |
-| T-UNIT-06 | merch_line_adviceが501文字は失敗 | 501文字の文字列 | `ZodError` |
-| T-UNIT-07 | tipsが11件は失敗 | `tips: [×11]` | `ZodError` |
-| T-UNIT-08 | booking_urlがURL形式でない場合は失敗 | `booking_url: "not-a-url"` | `ZodError` |
+| T-UNIT-03 | time が0埋めなし形式は失敗 | `time: "7:30"` | `ZodError` |
+| T-UNIT-04 | estimated_cost が負数は失敗 | `estimated_cost: -1` | `ZodError` |
+| T-UNIT-05 | accommodation が null は通過 | `accommodation: null` | PASS |
+| T-UNIT-06 | affiliate_links に不正URLは失敗 | `rakuten: "not-a-url"` | `ZodError` |
+| T-UNIT-07 | goods_links が6件は失敗 | 6件の配列 | `ZodError` |
+| T-UNIT-08 | tips が11件は失敗 | 11件の配列 | `ZodError` |
 
-### 2.2 利用枠チェックロジック
+### 2.2 レート制限チェックロジック
 
 | テストID | テスト名 | 入力 | 期待結果 |
 |---------|---------|------|---------|
-| T-UNIT-10 | Freeユーザー monthly_ai_used=2 は生成可 | tier:free, used:2 | `canGenerate: true` |
-| T-UNIT-11 | Freeユーザー monthly_ai_used=3 は生成不可 | tier:free, used:3 | `canGenerate: false` |
-| T-UNIT-12 | Premiumユーザー monthly_ai_used=99 は生成可 | tier:premium_monthly, used:99 | `canGenerate: true` |
-| T-UNIT-13 | Premiumユーザー monthly_ai_used=100 は生成不可 | tier:premium_monthly, used:100 | `canGenerate: false` |
+| T-UNIT-10 | 未ログイン daily_ai_used=2 は生成可 | type:guest, used:2 | `canGenerate: true` |
+| T-UNIT-11 | 未ログイン daily_ai_used=3 は生成不可 | type:guest, used:3 | `canGenerate: false` |
+| T-UNIT-12 | ログイン済み daily_ai_used=9 は生成可 | type:user, used:9 | `canGenerate: true` |
+| T-UNIT-13 | ログイン済み daily_ai_used=10 は生成不可 | type:user, used:10 | `canGenerate: false` |
 
-### 2.3 share_token 生成
+### 2.3 アフィリエイトURL生成
+
+| テストID | テスト名 | 入力 | 期待結果 |
+|---------|---------|------|---------|
+| T-UNIT-20 | 楽天トラベルURLに af パラメータが含まれる | area_code="tokyo-dome" | URL に `af=oshiplan` を含む |
+| T-UNIT-21 | じゃらんURLに afid パラメータが含まれる | 正常入力 | URL に `afid=oshiplan` を含む |
+| T-UNIT-22 | AmazonアソシエイトURLに tag が含まれる | ASIN入力 | URL に `tag=oshiplan-22` を含む |
+
+### 2.4 share_token 生成
 
 | テストID | テスト名 | 期待結果 |
 |---------|---------|---------|
-| T-UNIT-20 | トークンが32文字の16進数文字列 | `/^[0-9a-f]{32}$/` にマッチ |
-| T-UNIT-21 | 2回生成しても一致しない（衝突なし） | `token1 !== token2` |
-
-### 2.4 RevenueCat product_id → subscription_tier 変換
-
-| テストID | テスト名 | 入力 | 期待結果 |
-|---------|---------|------|---------|
-| T-UNIT-30 | 月額プランIDの変換 | `oshiplan_premium_monthly` | `premium_monthly` |
-| T-UNIT-31 | 年額プランIDの変換 | `oshiplan_premium_yearly` | `premium_yearly` |
-| T-UNIT-32 | 不明なプランIDはエラー | `unknown_product` | `Error` |
+| T-UNIT-30 | トークンが32文字の16進数 | `/^[0-9a-f]{32}$/` にマッチ |
+| T-UNIT-31 | 2回生成しても一致しない | `token1 !== token2` |
 
 ---
 
 ## 3. APIテスト — 認証（AUTH）
 
-### 3.1 正常系
-
 | テストID | テスト名 | リクエスト | 期待結果 |
 |---------|---------|----------|---------|
-| T-AUTH-01 | 有効なJWTで認証必須エンドポイントにアクセス | 有効な `Bearer <token>` | 200 |
-| T-AUTH-02 | 有効なJWTで `/api/users/me` 取得 | 有効な `Bearer <token>` | 200、自分のユーザー情報 |
-
-### 3.2 異常系
-
-| テストID | テスト名 | リクエスト | 期待結果 |
-|---------|---------|----------|---------|
-| T-AUTH-10 | Authorizationヘッダーなし | ヘッダーなし | 401 `UNAUTHORIZED` |
-| T-AUTH-11 | 不正なトークン形式 | `Bearer invalidtoken` | 401 `UNAUTHORIZED` |
-| T-AUTH-12 | 期限切れトークン | 期限切れのJWT | 401 `UNAUTHORIZED` |
-| T-AUTH-13 | 別ユーザーのトークンで他人のプラン取得 | 正規JWT + 他人のplan_id | 403 `FORBIDDEN` |
+| T-AUTH-01 | 有効なCookieで認証必須エンドポイントにアクセス | 有効な Cookie | 200 |
+| T-AUTH-10 | Cookie なしで認証必須エンドポイント | Cookie なし | 401 `UNAUTHORIZED` |
+| T-AUTH-11 | 不正な Cookie | 破損したJWT | 401 `UNAUTHORIZED` |
+| T-AUTH-12 | 期限切れ Cookie | 期限切れのJWT | 401 `UNAUTHORIZED` |
+| T-AUTH-13 | 他ユーザーのリソースへのアクセス | 正規JWT + 他人のplan_id | 403 `FORBIDDEN` |
 
 ---
 
 ## 4. APIテスト — ユーザー（USER）
 
-### 4.1 GET `/api/users/me`
-
 | テストID | テスト名 | 期待結果 |
 |---------|---------|---------|
-| T-USER-01 | プロフィール取得（正常） | 200、`id / email / subscription_tier / monthly_ai_used` を含む |
-| T-USER-02 | monthly_ai_limitがFreeで3 | 200、`monthly_ai_limit: 3` |
-| T-USER-03 | monthly_ai_limitがPremiumで100 | 200、`monthly_ai_limit: 100` |
-
-### 4.2 PATCH `/api/users/me`
-
-| テストID | テスト名 | リクエスト | 期待結果 |
-|---------|---------|----------|---------|
-| T-USER-10 | display_name更新 | `{"display_name": "新しい名前"}` | 200、更新後の値 |
-| T-USER-11 | home_station更新 | `{"home_station": "大阪駅"}` | 200、更新後の値 |
-| T-USER-12 | display_nameが31文字は失敗 | 31文字の文字列 | 400 `VALIDATION_ERROR` |
-| T-USER-13 | display_nameが空文字は失敗 | `{"display_name": ""}` | 400 `VALIDATION_ERROR` |
-| T-USER-14 | 空のボディは何も変更しない | `{}` | 200、変更なし |
-
-### 4.3 DELETE `/api/users/me`
-
-| テストID | テスト名 | 期待結果 |
-|---------|---------|---------|
-| T-USER-20 | アカウント削除 | 204、再度ログイン不可 |
-| T-USER-21 | 削除後に plans / artists が消えている | DBにレコードなし |
+| T-USER-01 | プロフィール取得 | 200、daily_ai_used / daily_ai_limit を含む |
+| T-USER-02 | daily_ai_limit がログイン済みで10 | `daily_ai_limit: 10` |
+| T-USER-10 | display_name 更新 | 200、更新後の値 |
+| T-USER-11 | home_station 更新 | 200、更新後の値 |
+| T-USER-12 | display_name が31文字は失敗 | 400 `VALIDATION_ERROR` |
+| T-USER-20 | アカウント削除 | 204、再ログイン不可 |
+| T-USER-21 | 削除後に plans / artists が消えている | DB にレコードなし |
 
 ---
 
 ## 5. APIテスト — 推し（ART）
 
-### 5.1 GET `/api/artists`
-
-| テストID | テスト名 | 期待結果 |
-|---------|---------|---------|
-| T-ART-01 | 推し一覧取得（登録あり） | 200、`artists` 配列 |
-| T-ART-02 | 推し未登録ユーザーは空配列 | 200、`artists: []` |
-| T-ART-03 | 他ユーザーの推しは含まれない | 200、自分の推しのみ |
-
-### 5.2 POST `/api/artists`
-
-| テストID | テスト名 | リクエスト | 期待結果 |
-|---------|---------|----------|---------|
-| T-ART-10 | 推し登録（正常） | `{"name": "A", "category": "idol"}` | 201、登録データ |
-| T-ART-11 | 全カテゴリで登録可 | `category: "anime"` 等 | 201 |
-| T-ART-12 | name が空は失敗 | `{"name": "", "category": "idol"}` | 400 `VALIDATION_ERROR` |
-| T-ART-13 | name が51文字は失敗 | 51文字の name | 400 `VALIDATION_ERROR` |
-| T-ART-14 | category が不正値は失敗 | `{"category": "vtuber"}` | 400 `VALIDATION_ERROR` |
-| T-ART-15 | category がない場合は失敗 | `{"name": "A"}` | 400 `VALIDATION_ERROR` |
-
-### 5.3 PATCH `/api/artists/:id`
-
-| テストID | テスト名 | 期待結果 |
-|---------|---------|---------|
-| T-ART-20 | 名前変更（正常） | 200、更新後のデータ |
-| T-ART-21 | カテゴリ変更（正常） | 200、更新後のデータ |
-| T-ART-22 | 存在しないidは404 | 404 `NOT_FOUND` |
-| T-ART-23 | 他ユーザーの推しは403 | 403 `FORBIDDEN` |
-
-### 5.4 DELETE `/api/artists/:id`
-
-| テストID | テスト名 | 期待結果 |
-|---------|---------|---------|
-| T-ART-30 | 推し削除（正常） | 204 |
-| T-ART-31 | 削除後に紐づくプランは残る | plans の artist_id は保持 |
-| T-ART-32 | 他ユーザーの推しは削除不可 | 403 `FORBIDDEN` |
+旧仕様と同一のため省略。T-ART-01〜32 を参照。
 
 ---
 
@@ -221,14 +170,7 @@ T-[カテゴリ]-[連番]
 
 ### 6.1 GET `/api/plans`
 
-| テストID | テスト名 | クエリ | 期待結果 |
-|---------|---------|-------|---------|
-| T-PLAN-01 | プラン一覧取得（upcoming） | `type=upcoming` | 200、event_date >= 今日のプランのみ |
-| T-PLAN-02 | プラン一覧取得（past） | `type=past` | 200、event_date < 今日のプランのみ |
-| T-PLAN-03 | デフォルトはupcoming | クエリなし | 200、upcoming相当 |
-| T-PLAN-04 | limit指定 | `limit=5` | 200、5件以下 |
-| T-PLAN-05 | offset指定（ページネーション） | `offset=10` | 200、11件目以降 |
-| T-PLAN-06 | 他ユーザーのプランは含まれない | — | 200、自分のプランのみ |
+T-PLAN-01〜06（旧仕様と同一）。
 
 ### 6.2 POST `/api/plans/generate` ⭐コア
 
@@ -236,259 +178,267 @@ T-[カテゴリ]-[連番]
 
 | テストID | テスト名 | 条件 | 期待結果 |
 |---------|---------|------|---------|
-| T-PLAN-10 | AIプラン生成（日帰り） | `stay_overnight: false` | 201、plan_json に宿泊なし |
-| T-PLAN-11 | AIプラン生成（1泊） | `stay_overnight: true` | 201、plan_json に accommodation あり |
-| T-PLAN-12 | 物販オプションあり | `merch: true` | 201、merch_line_advice が非null |
-| T-PLAN-13 | 聖地巡礼オプションあり | `pilgrimage: true` | 201、tips に聖地情報を含む |
-| T-PLAN-14 | departure省略時はhome_stationが使用される | departure未指定 | 201、departure = users.home_station |
-| T-PLAN-15 | monthly_ai_usedがインクリメントされる | 生成前used:1 | 生成後used:2 |
+| T-PLAN-10 | 未ログインでプラン生成可 | Cookie なし | 201、plan_json生成 |
+| T-PLAN-11 | 宿泊オプションありでaffiliate_linksが付与 | `stay_overnight: true` | `accommodation.affiliate_links.rakuten` が非null |
+| T-PLAN-12 | 宿泊オプションなしでaccommodationがnull | `stay_overnight: false` | `accommodation: null` |
+| T-PLAN-13 | 物販オプションありでmerch_line_adviceが非null | `merch: true` | `merch_line_advice` が文字列 |
+| T-PLAN-14 | departure省略時はhome_stationが使用 | departure未指定 | departure = users.home_station |
+| T-PLAN-15 | daily_ai_usedがインクリメント | 生成前used:1 | 生成後used:2 |
 | T-PLAN-16 | plan_json が Zodスキーマに準拠 | 任意の正常リクエスト | schema validation PASS |
 
 **異常系**
 
 | テストID | テスト名 | 条件 | 期待結果 |
 |---------|---------|------|---------|
-| T-PLAN-20 | Free枠超過（3回目消費済み） | monthly_ai_used: 3 | 429 `AI_QUOTA_EXCEEDED` |
-| T-PLAN-21 | Premium日次上限超過 | monthly_ai_used: 100, Premium | 429 `AI_QUOTA_EXCEEDED` |
+| T-PLAN-20 | 未ログイン daily_ai_used=3 は429 | 3回消費済み（IP） | 429 `RATE_LIMIT_EXCEEDED` |
+| T-PLAN-21 | ログイン済み daily_ai_used=10 は429 | 10回消費済み | 429 `RATE_LIMIT_EXCEEDED` |
 | T-PLAN-22 | 過去の日付は失敗 | `event_date: "2020-01-01"` | 400 `VALIDATION_ERROR` |
 | T-PLAN-23 | event_name が空は失敗 | `event_name: ""` | 400 `VALIDATION_ERROR` |
-| T-PLAN-24 | venue_hint が81文字は失敗 | 81文字 | 400 `VALIDATION_ERROR` |
-| T-PLAN-25 | 他ユーザーのartist_idは失敗 | 他人のartist_id | 400 `VALIDATION_ERROR` |
-| T-PLAN-26 | Claude APIタイムアウト時はmonthly_ai_usedをカウントしない | APIタイムアウト模擬 | 503 `AI_UNAVAILABLE`、used変化なし |
+| T-PLAN-24 | Claude APIタイムアウト時はcountしない | APIタイムアウト模擬 | 503 `AI_UNAVAILABLE`、used変化なし |
 
-### 6.3 GET `/api/plans/:id`
+### 6.3〜6.7 その他プランAPI
 
-| テストID | テスト名 | 期待結果 |
-|---------|---------|---------|
-| T-PLAN-30 | プラン詳細取得（正常） | 200、plan_json を含む全フィールド |
-| T-PLAN-31 | 存在しないidは404 | 404 `NOT_FOUND` |
-| T-PLAN-32 | 他ユーザーのプランは403 | 403 `FORBIDDEN` |
+T-PLAN-30〜71（旧仕様準拠）。
 
-### 6.4 PATCH `/api/plans/:id`
-
-| テストID | テスト名 | リクエスト | 期待結果 |
-|---------|---------|----------|---------|
-| T-PLAN-40 | plan_json更新（正常） | 正しいplan_json | 200、更新後のデータ |
-| T-PLAN-41 | itineraryのみ変更 | itineraryを差し替え | 200 |
-| T-PLAN-42 | plan_jsonのスキーマ違反は失敗 | `itinerary: []` | 400 `VALIDATION_ERROR` |
-| T-PLAN-43 | 他ユーザーのプランは更新不可 | 他人のplan_id | 403 `FORBIDDEN` |
-
-### 6.5 DELETE `/api/plans/:id`
-
-| テストID | テスト名 | 期待結果 |
-|---------|---------|---------|
-| T-PLAN-50 | プラン削除（正常） | 204 |
-| T-PLAN-51 | 削除後に plan_records も消える | DBに plan_records なし |
-| T-PLAN-52 | 他ユーザーのプランは削除不可 | 403 `FORBIDDEN` |
-| T-PLAN-53 | 存在しないidは404 | 404 `NOT_FOUND` |
-
-### 6.6 POST `/api/plans/:id/share`
-
-| テストID | テスト名 | 条件 | 期待結果 |
-|---------|---------|------|---------|
-| T-PLAN-60 | 共有トークン発行（Premium） | Premium ユーザー | 200、`share_token` と `share_url` |
-| T-PLAN-61 | 再発行で古いトークンは無効化 | 2回連続発行 | 2回目のみ有効 |
-| T-PLAN-62 | Freeユーザーは発行不可 | Free ユーザー | 403 `PREMIUM_REQUIRED` |
-| T-PLAN-63 | 他ユーザーのプランは発行不可 | 他人のplan_id | 403 `FORBIDDEN` |
-
-### 6.7 DELETE `/api/plans/:id/share`
-
-| テストID | テスト名 | 期待結果 |
-|---------|---------|---------|
-| T-PLAN-70 | 共有トークン無効化（正常） | 204、share_token が null に |
-| T-PLAN-71 | 無効化後の共有URLは404 | `GET /api/shared/:token` → 404 |
+**変更点**:
+- 6.6 `POST /api/plans/:id/share`: Premiumチェックを削除。**全ユーザー無料で共有可能**。T-PLAN-62（`Freeユーザーは発行不可`）を削除。
 
 ---
 
 ## 7. APIテスト — 共有プラン（SHARE）
 
-| テストID | テスト名 | 条件 | 期待結果 |
-|---------|---------|------|---------|
-| T-SHARE-01 | 共有プラン閲覧（正常・未認証） | 有効な token | 200、plan_json 含む |
-| T-SHARE-02 | レスポンスに user_id / artist_id は含まれない | 有効な token | user_id, artist_id なし |
-| T-SHARE-03 | 存在しないトークンは404 | 不正な token | 404 `NOT_FOUND` |
-| T-SHARE-04 | 無効化済みトークンは404 | 削除済みトークン | 404 `NOT_FOUND` |
-| T-SHARE-05 | 認証なしでアクセスできる | Authorization ヘッダーなし | 200 |
-
----
-
-## 8. APIテスト — Webhook（HOOK）
+旧仕様と同一だが以下を追加：
 
 | テストID | テスト名 | 条件 | 期待結果 |
 |---------|---------|------|---------|
-| T-HOOK-01 | INITIAL_PURCHASE で subscription_tier 更新 | type: INITIAL_PURCHASE | 200、users.subscription_tier = premium_monthly |
-| T-HOOK-02 | INITIAL_PURCHASE で subscriptions に INSERT | type: INITIAL_PURCHASE | 200、subscriptions テーブルに新レコード |
-| T-HOOK-03 | RENEWAL で expires_at 更新 | type: RENEWAL | 200、subscriptions.expires_at 更新 |
-| T-HOOK-04 | EXPIRATION で subscription_tier = free | type: EXPIRATION | 200、users.subscription_tier = free |
-| T-HOOK-05 | CANCELLATION は即時 free にしない | type: CANCELLATION | 200、tier は変更しない（期限切れまで継続） |
-| T-HOOK-06 | 不正な署名は401 | Authorization 不正 | 401 |
-| T-HOOK-07 | 不明な event.type は400 | type: UNKNOWN | 400（ログのみ、エラー返却） |
-| T-HOOK-08 | 存在しない app_user_id は無視 | 存在しないUUID | 200（エラーにしない） |
+| T-SHARE-01〜05 | 旧仕様と同一 | — | — |
+| T-SHARE-06 | 共有プランにaffiliateリンクが含まれる | 有効なtoken | `accommodation.affiliate_links` が非null |
 
 ---
 
-## 9. セキュリティテスト（SEC）
+## 8. APIテスト — アフィリエイト（AFF）【新規】
 
-### 9.1 RLS（Row Level Security）
+### 8.1 POST `/api/affiliate/click`
 
-| テストID | テスト名 | 手順 | 期待結果 |
+| テストID | テスト名 | 条件 | 期待結果 |
 |---------|---------|------|---------|
-| T-SEC-01 | ユーザーは自分のプランのみ取得できる | DBで直接SELECTを別ユーザーで試行 | 0件 |
-| T-SEC-02 | ユーザーは他人のartistsを更新できない | 他人のartist_idでUPDATE | 0行更新 |
-| T-SEC-03 | share_tokenが一致する場合のみ匿名でplans読取可 | 匿名でSELECT（token一致） | 1件 |
-| T-SEC-04 | share_tokenが不一致の場合は匿名でplans読取不可 | 匿名でSELECT（token不一致） | 0件 |
-| T-SEC-05 | subscriptionsはサービスロール以外でINSERT不可 | 一般ユーザーでINSERT | エラー |
+| T-AFF-01 | クリック計測（正常）| 有効なリクエスト | 200、DBにレコードが作成される |
+| T-AFF-02 | plan_idなしでも計測可 | `plan_id: null` | 200 |
+| T-AFF-03 | 同一IP×同一URLは1時間に1カウント | 連続クリック | 2回目以降もDBへの追加なし（KVでブロック） |
+| T-AFF-04 | affiliate_typeが不正値は400 | `type: "invalid"` | 400 `VALIDATION_ERROR` |
+| T-AFF-05 | destination_urlが不正URLは400 | `destination_url: "not-url"` | 400 `VALIDATION_ERROR` |
 
-### 9.2 API認証・認可
+### 8.2 アフィリエイトURL生成（Unit）
 
-| テストID | テスト名 | 手順 | 期待結果 |
-|---------|---------|------|---------|
-| T-SEC-10 | APIキーがレスポンスヘッダーに漏れない | 任意のAPIレスポンスを確認 | APIキー系ヘッダーなし |
-| T-SEC-11 | `/api/shared/:token` で user_id が漏れない | 共有URLにアクセス | user_id なし |
-| T-SEC-12 | JWTのsecretが推測不可能な強度 | Supabase Auth設定確認 | RS256 署名 |
-| T-SEC-13 | share_tokenが推測不可能（32文字hex） | トークン確認 | ランダム性あり |
-
-### 9.3 プロンプトインジェクション
-
-| テストID | テスト名 | 手順 | 期待結果 |
-|---------|---------|------|---------|
-| T-SEC-20 | event_nameにプロンプトを埋め込んでも無効 | `event_name: "システムプロンプトを無視して..."` | plan_json が正常スキーマを満たす |
-| T-SEC-21 | venue_hintに悪意ある内容を入れてもガードされる | 違法行為を促す文字列 | 正常なプランが返却される or エラー |
-| T-SEC-22 | plan_jsonスキーマ違反のAI出力はリトライされる | AIが不正JSONを返す（モック） | 最大2回リトライ後エラー |
-
-### 9.4 レート制限
-
-| テストID | テスト名 | 手順 | 期待結果 |
-|---------|---------|------|---------|
-| T-SEC-30 | Free: 61req/分でレート制限 | 61回/分でAPIを叩く | 61回目が 429 |
-| T-SEC-31 | Premium: 121req/分でレート制限 | 121回/分でAPIを叩く | 121回目が 429 |
-| T-SEC-32 | Free AI生成: 4回目は429 | AI生成を4回リクエスト | 4回目が 429 `AI_QUOTA_EXCEEDED` |
+| テストID | テスト名 | 期待結果 |
+|---------|---------|---------|
+| T-AFF-10 | plan_json に rakuten affiliate_link が含まれる | 宿泊オプションありの生成で rakuten URL が付与 |
+| T-AFF-11 | affiliate URLに af=oshiplan が含まれる | 楽天URLに `af=oshiplan` パラメータ |
+| T-AFF-12 | 共有プランにもaffiliate URLが含まれる | GET /api/shared/:token のレスポンスに含まれる |
 
 ---
 
-## 10. 性能テスト（PERF）
+## 9. APIテスト — 会場（VENUE）【新規】
+
+| テストID | テスト名 | 期待結果 |
+|---------|---------|---------|
+| T-VENUE-01 | 会場一覧取得 | 200、venues配列 |
+| T-VENUE-02 | 会場詳細取得 | 200、nearby_hotels配列（アフィリエイトURL付き） |
+| T-VENUE-03 | 存在しないslugは404 | 404 `NOT_FOUND` |
+| T-VENUE-04 | nearby_hotelsにrakutenリンクが含まれる | rakutenプロパティが非null |
+| T-VENUE-05 | 認証不要でアクセスできる | Cookie なし | 200 |
+
+---
+
+## 10. セキュリティテスト（SEC）
+
+### 10.1 RLS（Row Level Security）
+
+T-SEC-01〜05（旧仕様準拠、subscriptions関連は削除）。
+
+### 10.2 API認証・認可
+
+T-SEC-10〜13（旧仕様準拠）。
+
+### 10.3 プロンプトインジェクション
+
+T-SEC-20〜22（旧仕様準拠）。
+
+### 10.4 レート制限
+
+| テストID | テスト名 | 手順 | 期待結果 |
+|---------|---------|------|---------|
+| T-SEC-30 | 未ログイン: AI生成 4回目は429 | 同一IPで4回リクエスト | 4回目が 429 `RATE_LIMIT_EXCEEDED` |
+| T-SEC-31 | ログイン済み: AI生成 11回目は429 | 同一ユーザーで11回 | 11回目が 429 |
+| T-SEC-32 | レート制限は翌日リセットされる | 翌日に同IPでリクエスト | 200（リセット済み） |
+
+### 10.5 アフィリエイト不正対策【新規】
+
+| テストID | テスト名 | 手順 | 期待結果 |
+|---------|---------|------|---------|
+| T-SEC-40 | 同一IPの連続クリックは1時間に1カウント | 1時間以内に同URLを2回クリック | affiliate_clicks に1件のみ記録 |
+| T-SEC-41 | affiliate URLが当サービスのURL以外にリダイレクトしない | destination_url を外部不審URLに設定 | バリデーションエラー or フィルタ |
+
+---
+
+## 11. SEOテスト（SEO）【新規】
+
+### 11.1 会場別ページ（SSG）
+
+| テストID | テスト名 | 手順 | 期待結果 |
+|---------|---------|------|---------|
+| T-SEO-01 | 会場別ページが正しいtitleを持つ | `/venue/tokyo-dome` にアクセス | `<title>東京ドーム 遠征プラン...` を含む |
+| T-SEO-02 | OGPタグが設定されている | ページのHTMLを確認 | `og:title` / `og:description` / `og:image` が設定 |
+| T-SEO-03 | Schema.orgのLocalBusinessが設定されている | HTMLを確認 | JSON-LDに `"@type": "LodgingBusiness"` 等 |
+| T-SEO-04 | 会場ページがGoogleにインデックスされる | Google Search Console | インデックスステータス: 有効 |
+| T-SEO-05 | robots.txtが正しく設定されている | `/robots.txt` | 会場ページが allow、API が disallow |
+
+### 11.2 Core Web Vitals（Lighthouse CI）
+
+| テストID | テスト名 | 計測方法 | 合格基準 |
+|---------|---------|---------|---------|
+| T-SEO-10 | トップページのLCP | Lighthouse CI | < 2.5秒 |
+| T-SEO-11 | 会場別ページのLCP | Lighthouse CI | < 2.5秒 |
+| T-SEO-12 | CLSスコア | Lighthouse CI | < 0.1 |
+| T-SEO-13 | Performanceスコア | Lighthouse CI | ≥ 90 |
+
+### 11.3 OGP画像（シェア時）
+
+| テストID | テスト名 | 期待結果 |
+|---------|---------|---------|
+| T-SEO-20 | 共有プランURLのOGP画像が生成される | X Card Validator で確認 | プラン情報を含む画像が表示 |
+| T-SEO-21 | OGP画像に公演名・会場・概算費用が含まれる | 画像を目視確認 | 必要情報が視認できる |
+
+---
+
+## 12. 性能テスト（PERF）
 
 | テストID | テスト名 | 手順 | 合格基準 |
 |---------|---------|------|---------|
 | T-PERF-01 | AIプラン生成のレスポンスタイム | 正常リクエストを5回計測 | 平均 10秒以内 |
-| T-PERF-02 | プラン一覧取得のレスポンスタイム | 10件のプランがある状態で計測 | p95 500ms以内 |
-| T-PERF-03 | プラン詳細取得のレスポンスタイム | plan_json が大きい状態で計測 | p95 500ms以内 |
-| T-PERF-04 | 共有プラン閲覧のレスポンスタイム（未認証） | 計測 | p95 500ms以内 |
-| T-PERF-05 | Webhook処理のレスポンスタイム | RevenueCat イベント受信 | 2秒以内 |
+| T-PERF-02 | 会場別ページの表示速度（SSG） | Lighthouse / WebPageTest | LCP < 1秒（CDNキャッシュ） |
+| T-PERF-03 | プラン一覧取得のレスポンスタイム | 10件のプランがある状態で計測 | p95 500ms以内 |
+| T-PERF-04 | 楽天トラベルAPI取得のレスポンスタイム | 会場詳細ページ計測 | ISRキャッシュ時 < 100ms |
 
 ---
 
-## 11. E2Eテスト（手動）
+## 13. E2Eテスト（Playwright）
 
-### E2E-01 新規ユーザーの初回利用フロー
+### E2E-01 ゲストでのプラン生成フロー
 
-**前提**：未登録のメールアドレス
+**前提**: 未ログイン状態（ブラウザセッションなし）
 
 | ステップ | 操作 | 期待結果 |
 |---------|------|---------|
-| 1 | S-02 新規登録画面でメール・パスワードを入力して「登録する」 | 確認メール送信のメッセージ |
-| 2 | S-51 プロフィール設定で display_name・home_station を入力して保存 | S-10 ホームへ遷移 |
-| 3 | S-41 推し登録で「テスト推し A / idol」を登録 | S-40 推し一覧に表示される |
-| 4 | BottomTabの「＋」をタップ → S-30 プラン作成 Step1 | 推し一覧が表示される |
-| 5 | 推しを選択 → 次へ（S-31） | Step2に遷移 |
-| 6 | 公演名・会場・日付・出発地を入力 → 次へ（S-32） | Step3に遷移 |
-| 7 | オプションを設定 → 「プランを生成する」 | S-33 ローディング画面へ |
-| 8 | 生成完了後 → S-34 生成結果確認 | plan_json の行程が表示される |
-| 9 | 「このまま保存」をタップ | S-21 プラン詳細へ遷移 |
-| 10 | S-20 プラン一覧を確認 | 保存したプランが表示される |
+| 1 | トップページ（`/`）にアクセス | ページが表示される、ヘッダーに「ログイン」が表示 |
+| 2 | 「遠征プランを作る」CTAをクリック | `/plans/new` に遷移 |
+| 3 | 「スキップして次へ」をクリック（推し未登録） | Step2に遷移 |
+| 4 | 公演名・会場名・日付・出発地を入力 | 入力完了 |
+| 5 | 「次へ」をクリック | Step3に遷移 |
+| 6 | オプションを設定して「遠征プランを生成する」をクリック | ローディング画面へ遷移 |
+| 7 | 生成完了 | 生成結果ページに行程・宿泊情報が表示される |
+| 8 | 宿泊の「楽天トラベルで予約する →」リンクを確認 | アフィリエイトURLが表示される |
+| 9 | 「プランを保存する」をクリック | ログインモーダルが表示される |
 
-**合否基準**：全ステップが期待結果通りに動作すること
+**合否基準**: 全ステップが期待結果通りに動作すること
 
 ---
 
-### E2E-02 プラン共有フロー（Premium）
+### E2E-02 ログインユーザーのプラン生成・保存・共有フロー
 
-**前提**：Premiumユーザーとして認証済み、プランが1件以上存在
+**前提**: ログイン済み
 
 | ステップ | 操作 | 期待結果 |
 |---------|------|---------|
-| 1 | S-21 プラン詳細で「しおりを共有する」をタップ | ネイティブ共有シートが開く |
-| 2 | 共有URLをコピー | `oshiplan.app/shared/[token]` 形式のURL |
-| 3 | 別のブラウザ/デバイスで共有URLにアクセス | S-25 共有プラン閲覧が表示される |
-| 4 | 共有画面に「編集」ボタンがないことを確認 | 読み取り専用 |
-| 5 | 「OshiPlanで作成する →」バナーをタップ | App Store / Google Play へ遷移 |
+| 1 | プラン作成フロー完了 → 「プランを保存する」 | `/plans/[id]` に遷移 |
+| 2 | プラン詳細で宿泊セクションを確認 | 楽天・じゃらんのアフィリエイトリンクが表示 |
+| 3 | 「しおりURLをコピー」をクリック | URLがクリップボードにコピーされる |
+| 4 | 別ブラウザで共有URLを開く | 認証なしでプランが表示される |
+| 5 | 共有ページにもアフィリエイトリンクが表示される | 楽天・じゃらんリンクが表示 |
+| 6 | 「OshiPlanで自分のプランを作ってみよう」CTAを確認 | バナーが表示される |
 
 ---
 
-### E2E-03 Free枠超過 → Premium誘導フロー
+### E2E-03 会場別ページからのプラン作成フロー（SEO流入シミュレーション）
 
-**前提**：Freeユーザー、monthly_ai_used = 2（残り1回）
+**前提**: 未ログイン状態
 
 | ステップ | 操作 | 期待結果 |
 |---------|------|---------|
-| 1 | S-32 Step3 で「残り生成回数：1回」と表示される | 正しく残回数が表示される |
-| 2 | プランを生成 → S-34 確認 → 保存 | monthly_ai_used = 3 になる |
-| 3 | 再度 S-32 を開く | 「残り0回」表示、生成ボタンがグレーアウト |
-| 4 | Premium誘導バナーをタップ | S-52 サブスクリプション管理へ遷移 |
-| 5 | 「月額プランに登録する」をタップ | RevenueCat 購入フローが起動 |
+| 1 | `/venue/tokyo-dome` にアクセス | 東京ドームの会場情報ページが表示 |
+| 2 | ページタイトルに「東京ドーム 遠征プラン」が含まれることを確認 | SEO設定が正しい |
+| 3 | 周辺ホテル一覧を確認 | 2〜3件のホテルがアフィリエイトリンク付きで表示 |
+| 4 | 「東京ドーム公演の遠征プランを作る（無料）」CTAをクリック | `/plans/new?venue=tokyo-dome` に遷移 |
+| 5 | 会場名が「東京ドーム」で自動入力されていることを確認 | 入力済みの状態 |
+| 6 | プラン生成完了 | プランが生成される |
 
 ---
 
-### E2E-04 遠征プラン編集フロー
+### E2E-04 レート制限フロー（ゲストユーザー）
 
-**前提**：認証済み、プランが1件以上存在
+**前提**: 未ログイン状態、当日2回プランを生成済み
 
 | ステップ | 操作 | 期待結果 |
 |---------|------|---------|
-| 1 | S-21 プラン詳細で「編集する」をタップ | S-22 プラン編集へ遷移 |
-| 2 | 行程の1つ目の時刻を「08:00」に変更 | 行程に反映される |
-| 3 | 「保存する」をタップ | S-21 プラン詳細へ遷移 |
-| 4 | 変更が反映されていることを確認 | 「08:00」が表示される |
+| 1 | 3回目のプラン生成を完了させる | プランが生成される |
+| 2 | 4回目のプラン生成を試みる（Step3で生成ボタンをクリック） | エラーモーダルが表示される |
+| 3 | モーダルに「本日の生成上限（3回）に達しました」が表示される | 正しいメッセージ |
+| 4 | 「ログインすると10回まで使えます」CTAが表示される | ログイン促進 |
+| 5 | CTAをクリックしてログインページへ | `/auth/login` に遷移 |
 
 ---
 
-### E2E-05 オフライン表示確認
+### E2E-05 アフィリエイトクリック計測フロー
 
-**前提**：認証済み、S-21 プラン詳細を一度表示済み
+**前提**: ログイン済み、プラン詳細ページを表示中
 
 | ステップ | 操作 | 期待結果 |
 |---------|------|---------|
-| 1 | デバイスをオフライン（機内モード）にする | — |
-| 2 | S-21 プラン詳細を開く | キャッシュからプランが表示される |
-| 3 | 行程タイムラインが表示されている | 正常に閲覧できる |
-| 4 | 「編集する」をタップ | 編集不可のメッセージ or ボタン非活性 |
+| 1 | プラン詳細の「楽天トラベルで予約する →」をクリック | 新しいタブで楽天トラベルが開く |
+| 2 | ネットワークログで `POST /api/affiliate/click` が呼ばれる | リクエストが発行される |
+| 3 | DB の affiliate_clicks テーブルにレコードが作成される | 1件追加 |
+| 4 | 再度クリックする | 同じURLへの2回目クリック |
+| 5 | affiliate_clicks のレコードが増えない（1時間制限） | カウント変化なし |
 
 ---
 
-## 12. リグレッションテスト（スモークテスト）
+## 14. リグレッションテスト（スモークテスト）
 
-リリース後・デプロイ後に毎回実行する最小限のチェックリスト。
+デプロイ後に毎回実行する最小限のチェックリスト。
 
 | # | 確認項目 | 確認方法 |
 |---|---------|---------|
-| 1 | ログインできる | メール認証でログイン |
-| 2 | プラン一覧が取得できる | `GET /api/plans` → 200 |
-| 3 | AI生成が動作する | 1件プランを生成 → 201 |
-| 4 | 共有プランが閲覧できる | 既存の共有URLにアクセス → 200 |
-| 5 | Webhookエンドポイントが疎通する | `POST /api/webhooks/revenuecat` → 200 |
+| 1 | トップページが表示される | `/` にアクセス → 200 |
+| 2 | 会場別ページが表示される | `/venue/tokyo-dome` → 200、SSGページ |
+| 3 | ゲストでプラン生成できる | POST /api/plans/generate → 201 |
+| 4 | アフィリエイトリンクが生成されている | 201レスポンスに `affiliate_links.rakuten` が存在 |
+| 5 | 共有プランが閲覧できる | 既存トークンで GET /api/shared/:token → 200 |
+| 6 | ログインできる | メール認証でログイン成功 |
 
 ---
 
-## 13. テスト実行順序と優先度まとめ
+## 15. テスト実行順序と優先度まとめ
 
 ```
 【リリース前に必須】
-  Phase 1（高）: T-UNIT-*         → ロジックの保証
-  Phase 2（高）: T-AUTH-*, T-SEC-* → セキュリティの保証
-  Phase 3（高）: T-PLAN-10〜26    → コア機能（AI生成）の保証
-  Phase 4（高）: E2E-01〜04       → 主要フロー手動確認
+  Phase 1（高）: T-UNIT-*           → ロジックの保証
+  Phase 2（高）: T-AUTH-*, T-SEC-*  → セキュリティの保証
+  Phase 3（高）: T-PLAN-10〜24      → コア機能（AI生成）の保証
+  Phase 4（高）: T-AFF-*            → アフィリエイト機能の保証
+  Phase 5（高）: E2E-01〜05         → ブラウザE2Eの自動実行
+  Phase 6（高）: T-SEO-01〜05       → SEO設定の確認
 
 【リリース前に推奨】
-  Phase 5（中）: T-USER-*, T-ART-*, T-PLAN-30〜71, T-SHARE-*, T-HOOK-*
-  Phase 6（中）: T-PERF-*
+  Phase 7（中）: T-USER-*, T-ART-*, T-PLAN-30〜71, T-SHARE-*, T-VENUE-*
+  Phase 8（中）: T-SEO-10〜21, T-PERF-*
 
 【リリース後】
-  リグレッション（スモークテスト）: デプロイごとに実施
+  スモークテスト: デプロイごとに実施
 ```
 
 ---
 
-## 14. テストツール・コマンド参考
+## 16. テストツール・コマンド参考
 
 ```bash
 # 単体テスト実行（Vitest）
@@ -497,13 +447,19 @@ npx vitest run
 # カバレッジ計測
 npx vitest run --coverage
 
-# APIテスト実行（Supertest / Hono）
-npx jest --testPathPattern=api
+# E2Eテスト実行（Playwright）
+npx playwright test
+
+# E2E レポート表示
+npx playwright show-report
+
+# Lighthouse CI
+npx lhci autorun
 
 # Supabase ローカル起動
 supabase start
 
 # テストデータ投入
-supabase db reset --db-url $TEST_DATABASE_URL
+supabase db reset
 psql $TEST_DATABASE_URL < tests/seed.sql
 ```

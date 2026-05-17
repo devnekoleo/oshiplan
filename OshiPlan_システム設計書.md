@@ -1,33 +1,35 @@
 # OshiPlan システム設計書
 
-推し活遠征プランナーアプリ
+推し活遠征プランナーWebサービス
 
-2026年5月 / Version 1.0 (MVP)
+2026年5月 / Version 2.0
 
 ---
 
 ## 1. システム概要
 
-OshiPlanは、ユーザーが入力した推し活の公演情報をもとに、AIが遠征計画を自動生成・管理するクロスプラットフォームモバイルアプリ。
+OshiPlanは、ユーザーが入力した推し活の公演情報をもとに、AIが遠征計画を自動生成し、宿泊・交通・グッズの予約アフィリエイトリンクとともに提供するWebブラウザサービス。
 
 ### 1.1 設計方針
 
 - 個人開発として最小コスト・最小運用負荷で立ち上げる
+- **SEOファースト**: 静的ページ（会場別LP等）と動的生成を組み合わせる
+- **アフィリエイトCV最大化**: プラン生成直後に予約リンクを自然に配置
 - サーバーレス・マネージドサービス中心の構成
 - AI APIコールはサーバー側で実施し、APIキーをクライアントに露出させない
-- LLMコスト管理を最優先（キャッシュ・レート制限・利用枠制御）
-- コード共通化のためクロスプラットフォーム開発フレームワークを採用
+- LLMコスト管理を最優先（IPベースのレート制限・キャッシュ・利用枠制御）
 
 ### 1.2 主要な非機能要件
 
 | 項目 | 要件 |
 |------|------|
 | 可用性 | 月次稼働率99%以上（個人開発レベル） |
-| 性能 | AIプラン生成は10秒以内に完了、画面遷移1秒以内 |
+| 性能 | AIプラン生成は10秒以内に完了、ページ表示1秒以内（LCP） |
+| SEO | Core Web Vitals グリーン、会場別ページが検索上位を狙える構造 |
 | セキュリティ | 通信HTTPS、認証はOAuth/PKCE、APIキーはサーバー側のみ保持 |
 | プライバシー | 個人情報保護法準拠、最小限の取得、明確な利用規約 |
-| スケーラビリティ | MAU 30,000まで構成変更なしで対応 |
-| コスト | 月次インフラ＋API合計を売上の30%以下に維持 |
+| スケーラビリティ | 月間50,000 PVまで構成変更なしで対応 |
+| コスト | 月次インフラ＋API合計をアフィリエイト収益の30%以下に維持 |
 
 ---
 
@@ -35,57 +37,80 @@ OshiPlanは、ユーザーが入力した推し活の公演情報をもとに、
 
 ### 2.1 全体構成
 
-クライアント（モバイルアプリ）→ Edge API → バックエンドサービス（Supabase / LLM / 外部API）の3層構成。
+ブラウザ → Next.js（SSR/SSG） → バックエンドサービス（Supabase / Claude API / 外部API）の構成。
 
 ```
-┌────────────────────────────────────────────────────┐
-│           Mobile App (iOS / Android)               │
-│         React Native + Expo                        │
-│         State: TanStack Query + Zustand            │
-└─────────────────────┬──────────────────────────────┘
-                      │ HTTPS (REST)
-                      ▼
-┌────────────────────────────────────────────────────┐
-│        Edge API Layer (Vercel Edge Functions)      │
-│        認証検証 / レート制限 / キャッシュ           │
-│        LLMプロンプト構築・実行                      │
-└──────┬────────────┬──────────────┬─────────────────┘
-       ▼            ▼              ▼
-┌────────────┐ ┌──────────┐ ┌──────────────┐
-│  Supabase  │ │  Claude  │ │ Google Maps  │
-│  DB + Auth │ │   API    │ │ /楽天トラベル │
-└────────────┘ └──────────┘ └──────────────┘
-
-┌────────────┐
-│ RevenueCat │  ← ストア課金管理
-└────────────┘
+┌──────────────────────────────────────────────────────────┐
+│         Browser (PC / Smartphone)                        │
+│         Next.js App Router (React)                       │
+│         Tailwind CSS / TanStack Query                    │
+└───────────────────────────┬──────────────────────────────┘
+                            │ HTTPS
+                            ▼
+┌──────────────────────────────────────────────────────────┐
+│         Next.js API Routes (Vercel Edge Functions)       │
+│         認証検証 / レート制限 / キャッシュ                │
+│         LLMプロンプト構築・実行                           │
+│         アフィリエイトURL生成                             │
+└───────┬─────────────┬────────────────┬───────────────────┘
+        ▼             ▼                ▼
+┌────────────┐ ┌──────────┐ ┌──────────────────┐
+│  Supabase  │ │  Claude  │ │  Google Maps API │
+│  DB + Auth │ │   API    │ │  楽天トラベルAPI  │
+└────────────┘ └──────────┘ └──────────────────┘
 ```
 
 ### 2.2 技術スタック選定
 
 | レイヤー | 採用技術 | 選定理由 |
 |---------|---------|---------|
-| クライアント | React Native + Expo | iOS/Android同時開発、Expo EAS BuildでCI簡略化 |
-| 状態管理 | TanStack Query + Zustand | サーバー状態とローカル状態の分離、学習コスト低 |
-| UIライブラリ | NativeWind (Tailwind for RN) | デザイン速度、AI駆動開発との相性 |
-| Edge API | Vercel Edge Functions / Hono | 低レイテンシ、無料枠が充実 |
-| DB / 認証 | Supabase | Postgres+認証+ストレージを一体で提供、無料枠大 |
-| LLM | Anthropic Claude API | 日本語精度・推論品質、Claude Code利用者で習熟済 |
-| ストア課金 | RevenueCat | iOS/Android両ストア課金を一元管理、無料枠あり |
-| プッシュ通知 | Expo Push Notifications | FCM/APNsを抽象化、無料 |
-| 地図 | Google Maps Platform | 経路・場所検索の業界標準、月$200無料クレジット |
-| 監視 | Sentry + Vercel Analytics | エラー追跡、無料枠で十分 |
-| CI/CD | GitHub Actions + Expo EAS | コードpush→自動ビルド/配布 |
+| フレームワーク | **Next.js 15 (App Router)** | SSG/SSR/ISRを使い分けられる。SEO・パフォーマンスに最適 |
+| スタイリング | **Tailwind CSS** | デザイン速度、AI駆動開発との相性 |
+| サーバー状態管理 | **TanStack Query** | APIキャッシュ・ローディング状態管理 |
+| クライアント状態 | **Zustand** | ローカル状態（UIフラグ・プラン作成ウィザード等） |
+| API Layer | **Next.js API Routes** (Vercel Edge Runtime) | 低レイテンシ、同一リポジトリで完結 |
+| DB / 認証 | **Supabase** | Postgres + Auth + ストレージを一体提供、無料枠大 |
+| LLM | **Anthropic Claude API** (claude-sonnet-4-6) | 日本語精度・推論品質 |
+| 地図 | **Google Maps Platform** | 経路・場所検索の業界標準 |
+| アフィリエイト | **楽天トラベルAPI / A8.net / Amazon アソシエイト** | 収益の柱 |
+| 監視 | **Sentry + Vercel Analytics** | エラー追跡・SEOトラフィック分析 |
+| CI/CD | **GitHub Actions + Vercel** | git push → 自動デプロイ |
 
 ---
 
-## 3. データモデル
+## 3. レンダリング戦略（SEO対応）
 
-### 3.1 ER概要
+### 3.1 ページ種別とレンダリング方式
 
-中心は `users`, `plans`, `events`。システムの中心は遠征プラン（plan）であり、ユーザーが推し（artist）の公演（event）について作成する。
+| ページ | 方式 | 理由 |
+|--------|------|------|
+| 会場別ランディングページ（/venue/[slug]） | **SSG** | SEOで最重要。ビルド時に静的生成 |
+| トップページ（/） | **SSG** | 変更頻度低。静的で十分 |
+| プラン一覧（/plans） | **SSR** | ユーザー固有データ |
+| プラン詳細（/plans/[id]） | **SSR** | ユーザー固有データ |
+| 共有プラン（/shared/[token]） | **SSR** | 認証不要・キャッシュ可 |
+| プラン作成（/plans/new） | **CSR** | インタラクティブなウィザード |
 
-### 3.2 主要テーブル
+### 3.2 会場別ページの構造
+
+```
+/venue/[slug]
+├── OGP・title・descriptionにキーワードを含める
+├── 会場の基本情報（アクセス・収容人数・コインロッカー）
+├── 周辺ホテル一覧（楽天トラベルアフィリエイトリンク付き）
+├── 「この会場への遠征プランを作成する」CTA
+└── 関連会場リンク
+```
+
+---
+
+## 4. データモデル
+
+### 4.1 ER概要
+
+中心は `users`, `plans`, `artists`。サブスクリプション不要のため、課金系テーブルを削除し、アフィリエイトクリックのトラッキング用テーブルを追加する。
+
+### 4.2 主要テーブル
 
 #### users
 
@@ -95,8 +120,8 @@ OshiPlanは、ユーザーが入力した推し活の公演情報をもとに、
 | email | text | 認証メール |
 | display_name | text | 表示名 |
 | home_station | text | 最寄り駅（プラン生成の起点） |
-| subscription_tier | enum | `free` / `premium_monthly` / `premium_yearly` |
-| monthly_ai_used | int | 当月のAI生成利用回数（フリー枠管理） |
+| daily_ai_used | int | 当日のAI生成利用回数（レート制限用） |
+| daily_ai_reset_at | date | daily_ai_usedのリセット日 |
 | created_at | timestamptz | 作成日時 |
 
 #### artists（推し）
@@ -104,28 +129,67 @@ OshiPlanは、ユーザーが入力した推し活の公演情報をもとに、
 | カラム | 型 | 説明 |
 |-------|---|------|
 | id | uuid | 主キー |
-| name | text | 推しの名称 |
-| category | enum | `idol` / `artist` / `2.5d` / `anime` / `sports` / `other` |
 | user_id | uuid | 登録ユーザー（FK to users） |
+| name | text | 推しの名称 |
+| category | enum | `idol / artist / 2.5d / anime / sports / other` |
+| created_at | timestamptz | 作成日時 |
 
 #### plans（遠征プラン）
 
 | カラム | 型 | 説明 |
 |-------|---|------|
 | id | uuid | 主キー |
-| user_id | uuid | 作成者 |
-| artist_id | uuid | 対象推し |
+| user_id | uuid | 作成者（nullable: 未ログインはnull） |
+| artist_id | uuid | 対象推し（nullable） |
 | event_name | text | 公演名 |
 | venue_name | text | 会場名 |
+| venue_slug | text | 会場別ページとの紐づけ（例: tokyo-dome） |
 | event_date | date | 公演日 |
 | event_time | time | 開演時刻 |
-| plan_json | jsonb | AI生成プラン本体（行程・宿・物販等） |
-| share_token | text | 共有用ランダムトークン |
+| departure | text | 出発地 |
+| plan_json | jsonb | AI生成プラン本体（アフィリエイトURL含む） |
+| share_token | text | 共有用ランダムトークン（UNIQUE, nullable） |
+| is_archived | bool | アーカイブ済みフラグ |
+| created_at | timestamptz | 作成日時 |
+| updated_at | timestamptz | 更新日時 |
+
+#### venues（会場マスタ）
+
+| カラム | 型 | 説明 |
+|-------|---|------|
+| id | uuid | 主キー |
+| slug | text | URLスラッグ（例: tokyo-dome）UNIQUE |
+| name | text | 会場名（例: 東京ドーム） |
+| prefecture | text | 都道府県 |
+| address | text | 住所 |
+| lat | float | 緯度 |
+| lng | float | 経度 |
+| capacity | int | 収容人数 |
+| rakuten_area_code | text | 楽天トラベルエリアコード |
 | created_at | timestamptz | 作成日時 |
 
-### 3.3 plan_json の構造
+#### affiliate_clicks（アフィリエイトクリック計測）
 
-AIから返却される構造化データ。スキーマでバリデーション。
+| カラム | 型 | 説明 |
+|-------|---|------|
+| id | uuid | 主キー |
+| plan_id | uuid | 対象プラン（FK to plans） |
+| affiliate_type | enum | `hotel / transit / goods` |
+| affiliate_partner | text | 楽天 / じゃらん / amazon 等 |
+| clicked_at | timestamptz | クリック日時 |
+
+#### plan_records（遠征記録 / v1.2）
+
+| カラム | 型 | 説明 |
+|-------|---|------|
+| id | uuid | 主キー |
+| plan_id | uuid | FK to plans（ON DELETE CASCADE） |
+| user_id | uuid | FK to users |
+| memo | text | 感想・メモ |
+| actual_cost | int | 実際の費用（円） |
+| created_at | timestamptz | 作成日時 |
+
+### 4.3 plan_json の構造（アフィリエイトURL対応版）
 
 ```json
 {
@@ -133,259 +197,283 @@ AIから返却される構造化データ。スキーマでバリデーション
   "estimated_cost": 38000,
   "itinerary": [
     { "time": "07:30", "action": "新幹線のぞみ乗車（名古屋→東京）", "cost": 11000 },
-    { "time": "10:30", "action": "ホテル荷物預け（東京ステーションホテル）" },
-    { "time": "13:00", "action": "物販列に並ぶ（推奨開始時刻、4時間待ち想定）" },
+    { "time": "10:30", "action": "ホテル荷物預け" },
+    { "time": "13:00", "action": "物販列に並ぶ（推奨開始時刻）" },
     { "time": "18:00", "action": "開演" }
   ],
-  "accommodation": { "name": "...", "price": 8000, "booking_url": "..." },
-  "transit": { "outbound": {}, "return": {} },
-  "merch_line_advice": "16:00頃に並ぶ層が多い。完売リスク低めのため14:00開始推奨。",
-  "tips": ["コインロッカーは...", "推奨ご飯処は..."]
+  "accommodation": {
+    "name": "東京ステーションホテル",
+    "area": "東京駅周辺",
+    "price_approx": 8000,
+    "affiliate_links": {
+      "rakuten": "https://travel.rakuten.co.jp/hotel/...?af=oshiplan",
+      "jalan": "https://www.jalan.net/...?afid=oshiplan"
+    }
+  },
+  "transit": {
+    "outbound": {
+      "type": "shinkansen",
+      "name": "のぞみ（名古屋→東京）",
+      "cost": 11000,
+      "duration_min": 100,
+      "booking_url": "https://www.eki-net.com/..."
+    },
+    "return": {
+      "type": "shinkansen",
+      "name": "のぞみ（東京→名古屋）",
+      "cost": 11000,
+      "duration_min": 100,
+      "booking_url": "https://www.eki-net.com/..."
+    }
+  },
+  "merch_line_advice": "14:00頃から並ぶのを推奨。完売リスク低め。",
+  "goods_links": [
+    {
+      "name": "推し活遠征バッグ（推奨）",
+      "amazon_url": "https://www.amazon.co.jp/...?tag=oshiplan-22"
+    }
+  ],
+  "tips": [
+    "コインロッカーは東京ドームシティ内に多数あり",
+    "開演前の食事は水道橋駅周辺が空いていておすすめ"
+  ]
 }
 ```
 
-### 3.4 Row Level Security（RLS）
+### 4.4 Row Level Security（RLS）
 
-Supabase標準のRLSを必須有効化。ポリシー例：
-
-- **plans**：ユーザーは自分のレコードのみread/write可。`share_token` が一致する場合のみ匿名アクセスでread可
-- **artists**：ユーザーは自分のレコードのみアクセス可
-- **users**：自分のレコードのみread/update可
+- **users**: `auth.uid() = id` のみ read / update 可
+- **artists**: `auth.uid() = user_id` のみ CRUD 可
+- **plans**:
+  - 認証ユーザー: `auth.uid() = user_id` のみ CRUD 可
+  - 共有アクセス: `share_token = :token` が一致すれば匿名 read 可
+  - 未ログイン生成プラン: `user_id IS NULL` は制限なし read / 作成者のみ edit
+- **affiliate_clicks**: INSERT は誰でも可（クリック計測のため）
+- **venues**: 全員 read 可（公開データ）
 
 ---
 
-## 4. API設計
+## 5. API設計
 
-### 4.1 エンドポイント一覧
+### 5.1 エンドポイント一覧
 
-| Method | Path | 用途 |
-|--------|------|------|
-| POST | `/api/plans/generate` | AIで遠征プラン生成 |
-| GET | `/api/plans` | 自分のプラン一覧取得 |
-| GET | `/api/plans/:id` | プラン詳細取得 |
-| PATCH | `/api/plans/:id` | プラン編集 |
-| DELETE | `/api/plans/:id` | プラン削除 |
-| POST | `/api/plans/:id/share` | 共有トークン発行 |
-| GET | `/api/shared/:token` | 共有プラン閲覧（認証不要） |
-| POST | `/api/artists` | 推し登録 |
-| POST | `/api/webhooks/revenuecat` | 課金イベント受信 |
+| Method | Path | 説明 | 認証 |
+|--------|------|------|------|
+| GET | `/api/users/me` | プロフィール取得 | 要 |
+| PATCH | `/api/users/me` | プロフィール更新 | 要 |
+| DELETE | `/api/users/me` | アカウント削除 | 要 |
+| GET | `/api/artists` | 推し一覧取得 | 要 |
+| POST | `/api/artists` | 推し登録 | 要 |
+| PATCH | `/api/artists/:id` | 推し編集 | 要 |
+| DELETE | `/api/artists/:id` | 推し削除 | 要 |
+| GET | `/api/plans` | プラン一覧取得 | 要 |
+| POST | `/api/plans/generate` | **AIプラン生成（コア）** | 任意 |
+| GET | `/api/plans/:id` | プラン詳細取得 | 要 |
+| PATCH | `/api/plans/:id` | プラン編集 | 要 |
+| DELETE | `/api/plans/:id` | プラン削除 | 要 |
+| POST | `/api/plans/:id/share` | 共有トークン発行 | 要 |
+| DELETE | `/api/plans/:id/share` | 共有トークン無効化 | 要 |
+| GET | `/api/shared/:token` | 共有プラン閲覧 | 不要 |
+| POST | `/api/affiliate/click` | アフィリエイトクリック計測 | 不要 |
+| GET | `/api/venues` | 会場一覧取得 | 不要 |
+| GET | `/api/venues/:slug` | 会場詳細取得（周辺ホテル含む） | 不要 |
 
-### 4.2 プラン生成API詳細
+### 5.2 プラン生成APIの変更点（アフィリエイト対応）
 
-最重要エンドポイント。
+プラン生成時に以下を追加実装する：
 
-#### リクエスト
+1. 楽天トラベルAPIで会場周辺ホテルを検索し、アフィリエイトURL付きで plan_json に格納
+2. 交通手段に応じた予約サイトURLを付与
+3. グッズ関連のAmazonアソシエイトリンクをtipsに付与
 
-```http
-POST /api/plans/generate
-Authorization: Bearer <supabase_jwt>
-Content-Type: application/json
+**レート制限（認証不要ユーザー対応）**
+- 未ログインユーザー: IPアドレスベースで1日3回
+- ログインユーザー: ユーザーIDベースで1日10回
+- Vercel KV（Redis）でカウント管理
 
-{
-  "artist_id": "uuid",
-  "event_name": "○○ ARENA TOUR 2026",
-  "venue_hint": "東京ドーム",
-  "event_date": "2026-08-15",
-  "event_time": "18:00",
-  "departure": "名古屋駅",
-  "budget_hint": 40000,
-  "options": { "stay_overnight": true, "merch": true, "pilgrimage": false }
-}
+---
+
+## 6. クライアント設計（Web）
+
+### 6.1 ページ構成
+
+| ページ | URL | 説明 | 認証 |
+|--------|-----|------|------|
+| トップ | `/` | サービス説明・プラン作成CTA | 不要 |
+| 会場別LP | `/venue/[slug]` | 会場情報・周辺ホテル・CTA | 不要 |
+| プラン作成 Step1 | `/plans/new` | 推し選択 | 任意 |
+| プラン作成 Step2 | `/plans/new/event` | 公演情報入力 | 任意 |
+| プラン作成 Step3 | `/plans/new/options` | オプション設定 | 任意 |
+| プラン作成中 | `/plans/new/generating` | ローディング | 任意 |
+| プラン確認 | `/plans/new/result` | 生成結果・保存 | 任意 |
+| プラン一覧 | `/plans` | マイプラン管理 | 要 |
+| プラン詳細 | `/plans/[id]` | 詳細・アフィリエイトリンク | 要 |
+| 共有プラン | `/shared/[token]` | 読み取り専用 | 不要 |
+| 推し一覧 | `/artists` | 推し管理 | 要 |
+| 設定 | `/settings` | プロフィール・ログアウト | 要 |
+| アーカイブ | `/archive` | 遠征記録（v1.2） | 要 |
+
+### 6.2 ナビゲーション構造
+
+モバイルファーストのレスポンシブデザイン。BottomTabBarではなく、ヘッダーナビゲーションを採用。
+
+```
+[PC]
+ヘッダー: Logo | プランを作る | マイプラン | 推し登録 | ログイン/アカウント
+
+[スマホ]
+ヘッダー: Logo | ≡ ハンバーガーメニュー
+フッター: 利用規約 | プライバシーポリシー | お問い合わせ
 ```
 
-#### 処理フロー
-
-1. JWT検証（Supabase）
-2. ユーザーの利用枠確認（freeなら月3回まで）
-3. キャッシュ確認（同一会場+同一出発地の過去プランがあれば部分流用）
-4. Google Maps APIで会場・経路・周辺情報を取得
-5. プロンプトを組み立て、Claude APIに送信
-6. JSONスキーマでバリデーション、失敗時は再試行（最大2回）
-7. DBに保存し、レスポンス返却
-8. 利用回数カウントアップ
-
-#### LLMプロンプト設計
-
-構造化出力のため、ツール呼び出し（Tool Use）またはJSONモードを利用。プロンプト要件：
-
-- **システムプロンプト**：推し活遠征に特化した日本の旅行プランナーとして振る舞う
-- **コンテキスト**：Google Mapsから取得した会場座標、周辺の宿、駅情報をプロンプトに注入
-- **出力指定**：上記 `plan_json` スキーマでJSONを返却
-- **ガードレール**：法令違反・違法転売の助長・特定個人の住所推測等を禁止
-
-### 4.3 レート制限
-
-| プラン | AI生成 | 通常API |
-|--------|--------|---------|
-| Free | 月3回 | 60リクエスト/分 |
-| Premium | 実質無制限（不正対策で日100回） | 120リクエスト/分 |
-
----
-
-## 5. クライアント設計
-
-### 5.1 画面構成
-
-- **ホーム**：直近の遠征予定、未来のプラン一覧
-- **プラン作成**：公演情報入力 → AI生成 → 結果表示・編集
-- **プラン詳細**：行程・地図・宿・物販タイム・共有
-- **推し一覧**：登録した推しを管理
-- **アーカイブ**：過去の遠征記録、年間サマリ
-- **設定**：プラン変更、課金管理、最寄り駅設定、ログアウト
-
-### 5.2 オフライン対応
-
-遠征当日の会場で電波が悪いケースに備え、表示中のプラン詳細はローカルキャッシュ（AsyncStorage）に保持。
-
-### 5.3 主要ライブラリ
+### 6.3 主要ライブラリ
 
 | ライブラリ | 用途 |
 |-----------|------|
-| expo-router | ファイルベースルーティング |
-| @tanstack/react-query | サーバー状態管理・キャッシュ |
-| zustand | ローカル状態（UIフラグ等） |
-| react-native-maps | 地図表示 |
-| react-native-purchases (RevenueCat) | ストア課金 |
-| expo-notifications | プッシュ通知 |
+| next | App Router / SSG / SSR / API Routes |
 | @supabase/supabase-js | 認証・DBクライアント |
+| @tanstack/react-query | サーバー状態管理・キャッシュ |
+| zustand | ローカル状態（プラン作成ウィザード状態等） |
+| @anthropic-ai/sdk | Claude API クライアント |
+| tailwindcss | スタイリング |
+| next/image | 画像最適化 |
+| react-hook-form + zod | フォームバリデーション |
 
 ---
 
-## 6. セキュリティ
+## 7. SEO設計
 
-### 6.1 認証・認可
+### 7.1 会場別ページのSEO設定
 
-- Supabase Authを利用（メール認証、Apple/Googleソーシャルログイン）
-- クライアントはアクセストークン（JWT）をセキュアストア（expo-secure-store）に保存
-- Edge API側でJWTを検証してから処理を実行
-- DBアクセスは全てRLSで保護
+```tsx
+// app/venue/[slug]/page.tsx
+export async function generateMetadata({ params }) {
+  const venue = await getVenue(params.slug)
+  return {
+    title: `${venue.name} 遠征プラン | OshiPlan`,
+    description: `${venue.name}への推し活遠征プランをAIが自動生成。周辺ホテル・アクセス・物販情報を一括確認。`,
+    openGraph: { ... }
+  }
+}
 
-### 6.2 APIキー管理
+export async function generateStaticParams() {
+  const venues = await getAllVenues()
+  return venues.map(v => ({ slug: v.slug }))
+}
+```
 
-- Claude API、Google Maps API等の秘密キーはVercel環境変数で管理
-- クライアントには絶対に配布しない
-- Google Mapsのクライアント側キーはアプリバンドルID制限で保護
+### 7.2 構造化データ（Schema.org）
 
-### 6.3 個人情報保護
-
-- 取得情報を必要最小限に絞る（メール、表示名、最寄り駅程度）
-- プライバシーポリシーをApp Store/Google Play要件に準拠して作成
-- ユーザー削除要求に対応するアカウント削除機能を実装
-- Apple Privacy Manifest対応必須
-
-### 6.4 不正利用対策
-
-- AI生成APIに重課金させる攻撃に備え、レート制限と利用枠管理を多層化
-- 複数アカウント不正対策：Apple/Googleの登録IDで重複検知
-- プロンプトインジェクション対策：システムプロンプトでガードレール、出力スキーマで検証
+会場別ページに `LocalBusiness` / `Event` スキーマを付与し、リッチリザルト対応。
 
 ---
 
-## 7. コスト試算
+## 8. セキュリティ
 
-### 7.1 月次運用コスト（MAU別）
+### 8.1 認証・認可
 
-| サービス | MAU 1,000 | MAU 10,000 | MAU 30,000 | 備考 |
-|---------|-----------|------------|------------|------|
+- Supabase Auth（メール認証、Apple/Googleログイン）
+- JWT は `httpOnly cookie` に保存（CSRFトークン併用）
+- API Routes でJWT検証
+
+### 8.2 APIキー管理
+
+- Claude API、Google Maps API等は Vercel 環境変数で管理
+- クライアントバンドルに含まれないよう Server Component / API Routes のみで使用
+
+### 8.3 レート制限（アフィリエイト不正防止）
+
+- AI生成: IPベース1日3回（未ログイン）/ ユーザーIDベース1日10回（ログイン）
+- アフィリエイトクリック: IPベース連続クリック防止（同一リンク1時間に1カウントのみ）
+- Vercel KV（Redis）でカウント管理
+
+---
+
+## 9. コスト試算
+
+### 9.1 月次運用コスト（PV別）
+
+| サービス | 5,000 PV/月 | 20,000 PV/月 | 50,000 PV/月 | 備考 |
+|---------|-------------|--------------|--------------|------|
 | Supabase | ¥0 | ¥3,500 | ¥3,500 | Free → Pro |
 | Vercel | ¥0 | ¥0 | ¥3,000 | Hobby枠超過時 |
-| Claude API | ¥3,000 | ¥15,000 | ¥40,000 | Sonnet前提 |
-| Google Maps | ¥0 | ¥0 | ¥5,000 | 月$200クレジット |
-| RevenueCat | ¥0 | ¥0 | ¥0 | 売上$2,500まで無料 |
-| Sentry等 | ¥0 | ¥0 | ¥1,500 | 無料枠 |
-| **合計** | **¥3,000** | **¥18,500** | **¥53,000** | |
+| Claude API | ¥1,500 | ¥5,000 | ¥12,000 | 1日3回制限込み |
+| Google Maps | ¥0 | ¥0 | ¥3,000 | 月\$200クレジット |
+| Sentry | ¥0 | ¥0 | ¥0 | 無料枠 |
+| **合計** | **¥1,600** | **¥8,600** | **¥21,600** | |
 
-> MAU 10,000時の売上（粗利込み）約19万円、コスト約2万円。ストア手数料を引いても十分黒字。
+### 9.2 LLMコスト管理戦略
 
-### 7.2 LLMコスト管理戦略
-
-- Claude Sonnetを基本利用（入力高品質、コストバランス良）
-- シンプルケースはHaikuにフォールバック
-- プロンプトは可能な限り短く、コンテキストはJSON圧縮
-- 同一会場の生成結果を会場テンプレートとして再利用（個人情報を除いたパターンを蓄積）
-- 月次のAPIコスト超過アラートを監視
+- Claude Sonnet を基本利用（コストバランス良）
+- 同一会場×出発地の過去プランを transit / accommodation テンプレートとして再利用
+- プロンプトは可能な限り短く（コンテキストをJSON圧縮）
+- 月次のAPIコスト超過アラートを Sentry / Vercel Analytics で監視
 
 ---
 
-## 8. デプロイ・運用
+## 10. デプロイ・運用
 
-### 8.1 ビルド・配布
+### 10.1 ビルド・配布
 
-- コードはGitHub privateリポジトリで管理
-- Expo EAS Buildでクラウドビルド、TestFlight/Google Play Internal Testingで内部配布
-- リリースはGit tag起点でGitHub Actions経由
+- コードは GitHub private リポジトリで管理
+- `main` ブランチへの push → Vercel が自動デプロイ
+- 会場別静的ページ: `npm run build` で全ページSSG生成
+- ISR（Incremental Static Regeneration）で会場データ更新時に再生成
 
-### 8.2 監視
+### 10.2 監視
 
 | ツール | 用途 |
 |-------|------|
-| Sentry | エラー追跡、リリースバージョン別の品質モニタリング |
-| Vercel Analytics | API性能、トラフィック傾向 |
+| Sentry | エラー追跡・アラート |
+| Vercel Analytics | PV・Core Web Vitals・API性能 |
 | Supabase Logs | DB側エラー |
-| RevenueCat Dashboard | 課金・解約状況 |
+| Google Search Console | SEO流入・キーワード分析 |
 
-### 8.3 障害対応
+### 10.3 障害対応
 
-個人開発のため24時間体制は不可能。以下方針：
-
-- **クリティカル障害**（決済不能、ログイン不可）：Sentryからメール即時通知
-- **非クリティカル障害**：日次サマリで確認
-- **ユーザーサポート**：アプリ内お問い合わせ＋メール対応（48時間以内返信目標）
+- クリティカル障害（ログイン不可・AI生成全停止）: Sentry からメール即時通知
+- 非クリティカル: 日次サマリで確認
+- ユーザーサポート: サイト内お問い合わせフォーム + メール（48時間以内返信目標）
 
 ---
 
-## 9. MVP開発タスク一覧
+## 11. MVP開発タスク一覧
 
-### Week 1：環境構築
+### Week 1: 環境構築
 
-- [ ] Expo + TypeScript プロジェクト初期化
-- [ ] Supabaseプロジェクト作成、テーブル・RLS定義
-- [ ] Vercel連携、環境変数設定
-- [ ] Anthropic API契約、RevenueCat設定
+- [ ] Next.js 15 (App Router) + TypeScript + Tailwind CSS プロジェクト初期化
+- [ ] Supabase プロジェクト作成・テーブル・RLS定義
+- [ ] Vercel 連携・環境変数設定
+- [ ] Claude API・Google Maps API・楽天トラベルAPI 契約
 
-### Week 2：認証・基盤
+### Week 2: 基盤実装
 
-- [ ] Supabase Auth組み込み（メール認証＋Apple/Googleログイン）
-- [ ] expo-routerで画面遷移の骨格
-- [ ] デザインシステム（カラー、タイポ、共通コンポーネント）
+- [ ] Supabase Auth 組み込み（メール・Apple/Google）
+- [ ] ヘッダーナビゲーション・レイアウト
+- [ ] デザインシステム（Tailwind コンポーネント）
 
-### Week 3〜6：コア機能
+### Week 3〜5: コア機能
 
-- [ ] 推し登録画面
-- [ ] プラン作成フォーム
-- [ ] Edge API：`/api/plans/generate` 実装
-- [ ] Claudeプロンプト・JSONスキーマ実装
-- [ ] Google Maps連携（経路・周辺検索）
-- [ ] プラン詳細画面（行程・地図表示）
+- [ ] 推し登録・管理画面
+- [ ] プラン作成ウィザード（3ステップ）
+- [ ] POST /api/plans/generate 実装（Claude + Google Maps + アフィリエイトリンク生成）
+- [ ] プラン詳細画面（アフィリエイトリンク表示）
 - [ ] プラン一覧・編集・削除
 
-### Week 7〜8：共有・課金
+### Week 5〜6: SEO施策
 
-- [ ] `share_token` による共有リンク機能
-- [ ] RevenueCat組み込み、サブスク購入フロー
-- [ ] 利用枠管理ロジック（月次リセット）
+- [ ] 会場マスタデータ作成（主要50会場）
+- [ ] 会場別ランディングページ（SSG）
+- [ ] OGP・Schema.org 設定
 
-### Week 9〜10：リリース準備
+### Week 7: 共有・仕上げ
 
-- [ ] プライバシーポリシー・利用規約作成
-- [ ] App Store / Google Play審査用アセット作成
-- [ ] βテスト・修正
-- [ ] ストア提出、審査対応
+- [ ] share_token 共有機能
+- [ ] アフィリエイトクリック計測API
+- [ ] レート制限実装（Vercel KV）
 
----
+### Week 8: βテスト・リリース
 
-## 10. 補足
-
-### 10.1 将来の拡張余地
-
-- **AIエージェント化**：Claude Agent SDKでチケット先行抽選代行など自動アクション
-- **音声入力**：「来月の福岡公演の遠征プラン作って」と話しかけるだけで生成
-- **コミュニティ機能**：同公演参戦者の匿名グルチャ
-- **B2B展開**：会場運営者・地方自治体への「来場者導線分析データ」提供
-
-### 10.2 開発参考資料
-
-- [Expo公式ドキュメント](https://docs.expo.dev)
-- [Supabase公式ドキュメント](https://supabase.com/docs)
-- [Anthropic Claude API](https://docs.claude.com)
-- [RevenueCat](https://www.revenuecat.com/docs)
+- [ ] 100名クローズドβ
+- [ ] フィードバック修正
+- [ ] 正式公開・アフィリエイトプログラム申請

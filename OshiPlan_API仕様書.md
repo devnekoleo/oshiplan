@@ -1,8 +1,8 @@
 # OshiPlan API仕様書
 
-推し活遠征プランナーアプリ
+推し活遠征プランナーWebサービス
 
-2026年5月 / Version 1.0 (MVP)
+2026年5月 / Version 2.0
 
 ---
 
@@ -11,33 +11,38 @@
 ### ベースURL
 
 ```
-https://api.oshiplan.app   （本番）
-http://localhost:3000       （開発）
+https://oshiplan.app/api   （本番）
+http://localhost:3000/api  （開発）
 ```
+
+### 実装基盤
+
+**Next.js API Routes**（Vercel Edge Runtime）。Hono は不使用。Next.js の `app/api/` ディレクトリに実装する。
 
 ### 認証方式
 
-Supabase Auth が発行する JWT（Bearer Token）を使用。
+Supabase Auth が発行する JWT を **httpOnly cookie** に保存。
 
 ```http
-Authorization: Bearer <supabase_access_token>
+Cookie: sb-access-token=<jwt>
 ```
 
-- 認証が必要なエンドポイントにトークンなし/期限切れでアクセスすると `401` を返す
-- トークンの取得・更新は Supabase Auth SDK（クライアント側）が担当し、API Routes では検証のみ行う
+- SSRページは `createServerClient` で cookie からJWT取得
+- API Routes は `createRouteHandlerClient` で検証
+- 認証不要エンドポイントはトークンなしで動作
 
 ### Content-Type
 
 リクエスト・レスポンスともに `application/json`。
 
-### レート制限
+### レート制限（Vercel KV / Redis）
 
-| プラン | AI生成（`/api/plans/generate`） | その他APIエンドポイント |
-|--------|-------------------------------|----------------------|
-| Free | 月3回 | 60 req/分 |
-| Premium | 日100回（実質無制限） | 120 req/分 |
+| ユーザー種別 | AI生成 `/api/plans/generate` | その他API |
+|------------|------------------------------|---------|
+| 未ログイン（IPベース） | 1日3回 | 60 req/分 |
+| ログイン済み（ユーザーIDベース） | 1日10回 | 120 req/分 |
 
-制限超過時は `429 Too Many Requests` を返す。
+> **変更点（旧仕様との差異）**: サブスクリプション廃止に伴い、月単位の制限から1日単位の制限に変更。未ログインでも利用可能。
 
 ### 共通エラーレスポンス
 
@@ -50,14 +55,13 @@ Authorization: Bearer <supabase_access_token>
 }
 ```
 
-| HTTPステータス | codeの例 | 説明 |
-|--------------|---------|------|
+| HTTPステータス | code | 説明 |
+|--------------|------|------|
 | 400 | `VALIDATION_ERROR` | リクエストのバリデーション失敗 |
 | 401 | `UNAUTHORIZED` | 認証トークンなし / 期限切れ |
 | 403 | `FORBIDDEN` | 他ユーザーのリソースへのアクセス |
 | 404 | `NOT_FOUND` | リソースが存在しない |
-| 429 | `RATE_LIMIT_EXCEEDED` | レート制限超過 |
-| 429 | `AI_QUOTA_EXCEEDED` | AI生成の月間・日次制限超過 |
+| 429 | `RATE_LIMIT_EXCEEDED` | レート制限超過（1日の上限に達した） |
 | 500 | `INTERNAL_ERROR` | サーバーエラー |
 | 503 | `AI_UNAVAILABLE` | Claude API が一時的に利用不可 |
 
@@ -67,7 +71,7 @@ Authorization: Bearer <supabase_access_token>
 
 | # | Method | Path | 説明 | 認証 |
 |---|--------|------|------|------|
-| 1 | GET | `/api/users/me` | 自分のプロフィール取得 | 要 |
+| 1 | GET | `/api/users/me` | プロフィール取得 | 要 |
 | 2 | PATCH | `/api/users/me` | プロフィール更新 | 要 |
 | 3 | DELETE | `/api/users/me` | アカウント削除 | 要 |
 | 4 | GET | `/api/artists` | 推し一覧取得 | 要 |
@@ -75,22 +79,25 @@ Authorization: Bearer <supabase_access_token>
 | 6 | PATCH | `/api/artists/:id` | 推し編集 | 要 |
 | 7 | DELETE | `/api/artists/:id` | 推し削除 | 要 |
 | 8 | GET | `/api/plans` | プラン一覧取得 | 要 |
-| 9 | POST | `/api/plans/generate` | AIプラン生成 | 要 |
+| 9 | **POST** | `/api/plans/generate` | **AIプラン生成（コア）** | 任意 |
 | 10 | GET | `/api/plans/:id` | プラン詳細取得 | 要 |
 | 11 | PATCH | `/api/plans/:id` | プラン編集 | 要 |
 | 12 | DELETE | `/api/plans/:id` | プラン削除 | 要 |
 | 13 | POST | `/api/plans/:id/share` | 共有トークン発行 | 要 |
 | 14 | DELETE | `/api/plans/:id/share` | 共有トークン無効化 | 要 |
 | 15 | GET | `/api/shared/:token` | 共有プラン閲覧 | 不要 |
-| 16 | POST | `/api/webhooks/revenuecat` | RevenueCat課金イベント受信 | 署名検証 |
+| 16 | **POST** | `/api/affiliate/click` | **アフィリエイトクリック計測** | 不要 |
+| 17 | GET | `/api/venues` | 会場一覧取得（SSG用） | 不要 |
+| 18 | GET | `/api/venues/:slug` | 会場詳細＋周辺ホテル取得 | 不要 |
+
+> **削除**: `POST /api/webhooks/revenuecat`（課金廃止のため）
+> **追加**: `POST /api/affiliate/click`、`GET /api/venues`、`GET /api/venues/:slug`
 
 ---
 
 ## 2. ユーザー
 
 ### 2.1 GET `/api/users/me` — プロフィール取得
-
-**説明**：ログイン中のユーザー情報を返す。
 
 **レスポンス 200**
 
@@ -100,18 +107,16 @@ Authorization: Bearer <supabase_access_token>
   "email": "user@example.com",
   "display_name": "推し活太郎",
   "home_station": "名古屋駅",
-  "subscription_tier": "free",
-  "monthly_ai_used": 1,
-  "monthly_ai_limit": 3,
+  "daily_ai_used": 2,
+  "daily_ai_limit": 10,
   "created_at": "2026-05-01T00:00:00Z"
 }
 ```
 
-| フィールド | 型 | 説明 |
-|-----------|---|------|
-| subscription_tier | `"free"` \| `"premium_monthly"` \| `"premium_yearly"` | 現在のプラン |
-| monthly_ai_used | number | 当月のAI生成利用回数 |
-| monthly_ai_limit | number | 当月の上限（Free: 3、Premium: 100） |
+| フィールド | 説明 |
+|-----------|------|
+| daily_ai_used | 本日のAI生成利用回数 |
+| daily_ai_limit | 本日の上限（ログインユーザー: 10） |
 
 ---
 
@@ -131,131 +136,74 @@ Authorization: Bearer <supabase_access_token>
 | display_name | 任意 | 1〜30文字 |
 | home_station | 任意 | 最大50文字 |
 
-**レスポンス 200**：更新後のユーザーオブジェクト（2.1と同形式）
-
 ---
 
 ### 2.3 DELETE `/api/users/me` — アカウント削除
 
-**説明**：ユーザーの全データ（plans / artists / plan_records / notifications）を削除し、Supabase Auth のアカウントも削除する。
-
-**レスポンス 204**：No Content
-
-**注意**：削除は即時かつ不可逆。RevenueCat 側の解約は別途ユーザーがストアから行う。
+- 全データ（plans / artists / plan_records / affiliate_clicks）を削除
+- Supabase Auth のアカウントも削除
+- **レスポンス 204**
 
 ---
 
 ## 3. 推し（Artists）
 
-### 3.1 GET `/api/artists` — 推し一覧取得
+### 3.1 GET `/api/artists`
 
 **レスポンス 200**
 
 ```json
 {
   "artists": [
-    {
-      "id": "uuid",
-      "name": "推し A",
-      "category": "idol",
-      "created_at": "2026-05-01T00:00:00Z"
-    },
-    {
-      "id": "uuid",
-      "name": "推し B",
-      "category": "anime",
-      "created_at": "2026-05-02T00:00:00Z"
-    }
+    { "id": "uuid", "name": "推し A", "category": "idol", "created_at": "..." },
+    { "id": "uuid", "name": "推し B", "category": "anime", "created_at": "..." }
   ]
 }
 ```
 
----
-
-### 3.2 POST `/api/artists` — 推し登録
-
-**リクエストボディ**
+### 3.2 POST `/api/artists`
 
 ```json
-{
-  "name": "推し A",
-  "category": "idol"
-}
+{ "name": "推し A", "category": "idol" }
 ```
 
-| フィールド | 必須 | バリデーション |
-|-----------|------|--------------|
-| name | ✅ | 1〜50文字 |
-| category | ✅ | `idol` \| `artist` \| `2.5d` \| `anime` \| `sports` \| `other` |
+バリデーション: name 1〜50文字必須、category は enum 値のみ。**レスポンス 201**。
 
-**レスポンス 201**
+### 3.3 PATCH `/api/artists/:id`
 
-```json
-{
-  "id": "uuid",
-  "name": "推し A",
-  "category": "idol",
-  "created_at": "2026-05-17T00:00:00Z"
-}
-```
+変更フィールドのみ送信。他ユーザーの推しは 403。
 
----
+### 3.4 DELETE `/api/artists/:id`
 
-### 3.3 PATCH `/api/artists/:id` — 推し編集
-
-**リクエストボディ**（変更するフィールドのみ）
-
-```json
-{
-  "name": "推し A（改名後）",
-  "category": "artist"
-}
-```
-
-**レスポンス 200**：更新後の推しオブジェクト
-
-**エラー**
-- `404`：指定した推しが存在しない、または自分の推しでない
-
----
-
-### 3.4 DELETE `/api/artists/:id` — 推し削除
-
-**レスポンス 204**：No Content
-
-**注意**：推しを削除しても、紐づくプランは削除されない（`artist_id` は保持、プラン一覧では「削除済みの推し」として表示）。
+紐づくプランは削除しない（artist_id は保持）。**レスポンス 204**。
 
 ---
 
 ## 4. プラン（Plans）
 
-### 4.1 GET `/api/plans` — プラン一覧取得
+### 4.1 GET `/api/plans`
 
 **クエリパラメータ**
 
-| パラメータ | 型 | デフォルト | 説明 |
-|----------|---|---------|------|
-| type | `"upcoming"` \| `"past"` | `"upcoming"` | 未来（event_date >= 今日）/ 過去の切替 |
-| limit | number | 20 | 取得件数（最大50） |
-| offset | number | 0 | ページネーション用オフセット |
+| パラメータ | デフォルト | 説明 |
+|----------|---------|------|
+| type | `upcoming` | `upcoming` / `past` |
+| limit | 20 | 最大50 |
+| offset | 0 | ページネーション |
 
-**レスポンス 200**
+**レスポンス 200**（artist_name を JOIN して返す）
 
 ```json
 {
   "plans": [
     {
       "id": "uuid",
-      "artist_id": "uuid",
       "artist_name": "推し A",
       "event_name": "○○ ARENA TOUR 2026",
       "venue_name": "東京ドーム",
       "event_date": "2026-08-15",
-      "event_time": "18:00",
-      "departure": "名古屋駅",
       "estimated_cost": 38000,
       "share_token": null,
-      "is_archived": false,
       "created_at": "2026-05-17T00:00:00Z"
     }
   ],
@@ -269,13 +217,13 @@ Authorization: Bearer <supabase_access_token>
 
 ### 4.2 POST `/api/plans/generate` — AIプラン生成 ⭐コア
 
-**説明**：公演情報を受け取り、Claude API を使って遠征プランを生成・保存して返す。
+**認証**: 任意（未ログインでも可・IPレート制限あり）
 
 **リクエストボディ**
 
 ```json
 {
-  "artist_id": "uuid",
+  "artist_id": "uuid（任意・未ログイン時はnull）",
   "event_name": "○○ ARENA TOUR 2026",
   "venue_hint": "東京ドーム",
   "event_date": "2026-08-15",
@@ -292,30 +240,28 @@ Authorization: Bearer <supabase_access_token>
 
 | フィールド | 必須 | バリデーション |
 |-----------|------|--------------|
-| artist_id | ✅ | 自分の artists テーブルに存在するUUID |
 | event_name | ✅ | 1〜80文字 |
 | venue_hint | ✅ | 1〜80文字 |
-| event_date | ✅ | `YYYY-MM-DD`、今日以降 |
-| event_time | — | `HH:MM`形式 |
-| departure | ✅ | 1〜50文字（未指定時は `users.home_station` を使用） |
+| event_date | ✅ | 今日以降 |
+| event_time | — | HH:MM形式 |
+| departure | ✅ | 1〜50文字（未指定はhome_stationを使用） |
 | budget_hint | — | 0以上の整数（円） |
-| options.stay_overnight | — | boolean（デフォルト: false） |
-| options.merch | — | boolean（デフォルト: false） |
-| options.pilgrimage | — | boolean（デフォルト: false） |
 
 **サーバー側処理フロー**
 
 ```
-1. JWT検証
-2. 利用枠確認（Free: monthly_ai_used >= 3 → 429）
-3. キャッシュ確認（同一会場×出発地の過去プランがあれば部分流用）
-4. Google Maps API で会場座標・周辺情報を取得
-5. プロンプト構築 → Claude API（claude-sonnet-4-6）に送信
-6. レスポンスを plan_json スキーマで Zod バリデーション
-7. バリデーション失敗時は最大2回リトライ
-8. plans テーブルに INSERT
-9. users.monthly_ai_used をインクリメント
-10. 生成したプランを返却
+1. レート制限チェック
+   - 未ログイン: Vercel KV で IP別 daily カウント（上限3）
+   - ログイン済み: Vercel KV で user_id別 daily カウント（上限10）
+2. キャッシュ確認（同一会場×出発地の過去プランで交通・ホテル情報を部分流用）
+3. Google Maps APIで会場座標・経路・周辺情報を取得
+4. 楽天トラベルAPIで会場周辺ホテルを検索（アフィリエイトURL生成）
+5. プロンプト構築（Mapsコンテキスト・ホテル情報を注入）
+   → Claude API（claude-sonnet-4-6）に送信
+6. plan_jsonスキーマでZodバリデーション（失敗時は最大2回リトライ）
+7. plansテーブルに INSERT
+8. レート制限カウントをインクリメント
+9. 生成プランを返却
 ```
 
 **レスポンス 201**
@@ -323,42 +269,48 @@ Authorization: Bearer <supabase_access_token>
 ```json
 {
   "id": "uuid",
-  "artist_id": "uuid",
-  "artist_name": "推し A",
   "event_name": "○○ ARENA TOUR 2026",
   "venue_name": "東京ドーム",
   "event_date": "2026-08-15",
-  "event_time": "18:00",
-  "departure": "名古屋駅",
-  "budget_hint": 40000,
   "plan_json": {
     "summary": "東京ドーム公演 1泊2日プラン",
     "estimated_cost": 38000,
     "itinerary": [
       { "time": "07:30", "action": "新幹線のぞみ乗車（名古屋→東京）", "cost": 11000 },
-      { "time": "10:30", "action": "ホテル荷物預け（東京ステーションホテル）", "cost": null },
-      { "time": "13:00", "action": "物販列に並ぶ（推奨開始時刻、4時間待ち想定）", "cost": null },
-      { "time": "17:30", "action": "開場", "cost": null },
-      { "time": "18:00", "action": "開演", "cost": null },
-      { "time": "21:00", "action": "終演・ホテルへ移動", "cost": null }
+      { "time": "10:30", "action": "ホテル荷物預け" },
+      { "time": "13:00", "action": "物販列に並ぶ（推奨開始時刻）" },
+      { "time": "18:00", "action": "開演" }
     ],
     "accommodation": {
-      "name": "東京ステーションホテル",
-      "price": 8000,
-      "booking_url": "https://..."
+      "name": "東京ドーム周辺エリア",
+      "area": "後楽園・水道橋",
+      "price_approx": 8000,
+      "affiliate_links": {
+        "rakuten": "https://travel.rakuten.co.jp/...?af=oshiplan&area=tokyo-dome",
+        "jalan": "https://www.jalan.net/...?afid=oshiplan"
+      }
     },
     "transit": {
-      "outbound": { "type": "shinkansen", "name": "のぞみ", "cost": 11000, "duration_min": 100 },
-      "return": { "type": "shinkansen", "name": "のぞみ", "cost": 11000, "duration_min": 100 }
+      "outbound": {
+        "type": "shinkansen",
+        "name": "のぞみ（名古屋→東京）",
+        "cost": 11000,
+        "duration_min": 100,
+        "booking_url": "https://www.eki-net.com/top/train/..."
+      },
+      "return": {
+        "type": "shinkansen",
+        "name": "のぞみ（東京→名古屋）",
+        "cost": 11000,
+        "duration_min": 100,
+        "booking_url": "https://www.eki-net.com/..."
+      }
     },
-    "merch_line_advice": "16:00頃に並ぶ層が多い。完売リスク低めのため14:00開始推奨。",
-    "tips": [
-      "コインロッカーは東京ドームシティ内に多数あり",
-      "開演前の食事は水道橋駅周辺が空いていておすすめ"
-    ]
+    "merch_line_advice": "14:00頃から並ぶのを推奨。完売リスク低め。",
+    "goods_links": [],
+    "tips": ["コインロッカーは東京ドームシティ内に多数あり"]
   },
   "share_token": null,
-  "is_archived": false,
   "created_at": "2026-05-17T10:00:00Z"
 }
 ```
@@ -367,172 +319,205 @@ Authorization: Bearer <supabase_access_token>
 
 | コード | 状況 |
 |--------|------|
-| `429 AI_QUOTA_EXCEEDED` | Free枠（月3回）を超過 |
-| `503 AI_UNAVAILABLE` | Claude API がタイムアウト or エラー（利用回数はカウントしない） |
-| `400 VALIDATION_ERROR` | リクエストのバリデーション失敗 |
+| `429 RATE_LIMIT_EXCEEDED` | 1日の生成上限超過（未ログイン3回 / ログイン10回） |
+| `503 AI_UNAVAILABLE` | Claude API タイムアウト（カウントしない） |
+| `400 VALIDATION_ERROR` | バリデーション失敗 |
 
 ---
 
-### 4.3 GET `/api/plans/:id` — プラン詳細取得
+### 4.3 GET `/api/plans/:id`
 
-**レスポンス 200**：`POST /api/plans/generate` のレスポンスと同形式
-
----
-
-### 4.4 PATCH `/api/plans/:id` — プラン編集
-
-**説明**：`plan_json` の内容を手動で更新する（行程・宿・アドバイスの修正）。
-
-**リクエストボディ**
-
-```json
-{
-  "plan_json": {
-    "summary": "東京ドーム公演 1泊2日プラン（修正版）",
-    "estimated_cost": 40000,
-    "itinerary": [
-      { "time": "07:00", "action": "新幹線のぞみ乗車（名古屋→東京）", "cost": 11000 },
-      { "time": "11:00", "action": "ホテル荷物預け", "cost": null }
-    ],
-    "accommodation": {
-      "name": "丸ノ内ホテル",
-      "price": 12000,
-      "booking_url": "https://..."
-    },
-    "transit": { "outbound": {}, "return": {} },
-    "merch_line_advice": "13:00頃から並ぶのを推奨。",
-    "tips": ["修正済みのtips"]
-  }
-}
-```
-
-**レスポンス 200**：更新後のプランオブジェクト（4.2と同形式）
-
-**エラー**
-- `400 VALIDATION_ERROR`：`plan_json` が必須フィールドを欠く
+**レスポンス 200**: 4.2と同形式（plan_json全体を返す）
 
 ---
 
-### 4.5 DELETE `/api/plans/:id` — プラン削除
+### 4.4 PATCH `/api/plans/:id`
 
-**レスポンス 204**：No Content
+plan_json を手動更新（Zodバリデーション必須）。**レスポンス 200**。
 
-紐づく `plan_records` も CASCADE で削除される。
+---
+
+### 4.5 DELETE `/api/plans/:id`
+
+plan_records も CASCADE 削除。**レスポンス 204**。
 
 ---
 
 ### 4.6 POST `/api/plans/:id/share` — 共有トークン発行
 
-**説明**：プランに `share_token` を発行し、公開URLを返す。既にトークンがある場合は再発行（古いトークンは無効化）。
-
-**リクエストボディ**：不要
+> **変更点**: 旧仕様ではPremiumユーザーのみだったが、**全ユーザー無料で利用可能**に変更。
 
 **レスポンス 200**
 
 ```json
 {
-  "share_token": "abc123xyz",
+  "share_token": "abc123xyz...",
   "share_url": "https://oshiplan.app/shared/abc123xyz"
 }
 ```
 
-**制限**：Freeプランは共有リンク発行不可 → `403 FORBIDDEN`（`code: "PREMIUM_REQUIRED"`）
-
 ---
 
-### 4.7 DELETE `/api/plans/:id/share` — 共有トークン無効化
+### 4.7 DELETE `/api/plans/:id/share`
 
-**説明**：`share_token` を削除し、共有URLをアクセス不能にする。
-
-**レスポンス 204**：No Content
+share_token を削除（null に更新）。**レスポンス 204**。
 
 ---
 
 ## 5. 共有プラン（認証不要）
 
-### 5.1 GET `/api/shared/:token` — 共有プラン閲覧
+### 5.1 GET `/api/shared/:token`
 
-**説明**：`share_token` に対応するプランを認証なしで読み取り専用で返す。
-
-**レスポンス 200**
+**レスポンス 200**（user_id / artist_id などを除いたレスポンス）
 
 ```json
 {
   "event_name": "○○ ARENA TOUR 2026",
   "venue_name": "東京ドーム",
   "event_date": "2026-08-15",
-  "event_time": "18:00",
-  "plan_json": { ... },
+  "plan_json": {
+    "accommodation": {
+      "affiliate_links": {
+        "rakuten": "https://...",
+        "jalan": "https://..."
+      }
+    }
+  },
   "shared_at": "2026-05-17T10:00:00Z"
 }
 ```
 
-**注意**：`user_id` / `artist_id` など個人情報に紐づくフィールドは返さない。
-
-**エラー**
-- `404 NOT_FOUND`：トークンが存在しない or 無効化済み
+> アフィリエイトリンクは共有ページでも表示する（収益機会を維持）。
 
 ---
 
-## 6. Webhook
+## 6. アフィリエイト（新規）
 
-### 6.1 POST `/api/webhooks/revenuecat` — 課金イベント受信
+### 6.1 POST `/api/affiliate/click` — クリック計測
 
-**説明**：RevenueCat からの課金ステータス変更を受け取り、`users.subscription_tier` と `subscriptions` テーブルを更新する。
+**説明**: アフィリエイトリンクのクリックを記録する。ユーザーのリダイレクト前にフロントエンドから呼び出す。
 
-**認証**：Bearer Token ではなく、RevenueCat の Webhook Authorization Header で署名検証を行う。
+**認証**: 不要
 
-```http
-Authorization: <revenuecat_webhook_secret>
-```
-
-**リクエストボディ**（RevenueCat 標準フォーマット）
+**リクエストボディ**
 
 ```json
 {
-  "event": {
-    "type": "INITIAL_PURCHASE",
-    "app_user_id": "<supabase_user_uuid>",
-    "product_id": "oshiplan_premium_monthly",
-    "expiration_at_ms": 1767225600000,
-    "environment": "PRODUCTION"
-  }
+  "plan_id": "uuid（任意）",
+  "affiliate_type": "hotel",
+  "affiliate_partner": "rakuten",
+  "destination_url": "https://travel.rakuten.co.jp/..."
 }
 ```
 
-**対応する `event.type`**
+| フィールド | 必須 | 値 |
+|-----------|------|---|
+| plan_id | — | クリック元のプランID |
+| affiliate_type | ✅ | `hotel` / `transit` / `goods` |
+| affiliate_partner | ✅ | `rakuten` / `jalan` / `amazon` / `eki-net` 等 |
+| destination_url | ✅ | リダイレクト先URL |
 
-| type | 処理内容 |
-|------|---------|
-| `INITIAL_PURCHASE` | `subscription_tier` を `premium_monthly` or `premium_yearly` に更新、`subscriptions` に INSERT |
-| `RENEWAL` | `subscriptions` の `expires_at` を更新 |
-| `CANCELLATION` | 期限切れ後に `subscription_tier` を `free` に戻す（即時変更ではない） |
-| `EXPIRATION` | `subscription_tier` を `free` に更新 |
-| `BILLING_ISSUE` | 課金失敗の記録（サービスは継続し、次回請求を待つ） |
+**レスポンス 200**
 
-**レスポンス 200**：`{ "received": true }`
+```json
+{
+  "redirect_url": "https://travel.rakuten.co.jp/..."
+}
+```
 
-**エラー**
-- `401`：署名検証失敗
-- `400`：不明な event.type（無視してログのみ記録）
+**不正クリック防止**: 同一IPアドレス×同一destination_urlは1時間に1カウントのみ記録（Vercel KV で管理）。
 
 ---
 
-## 7. スキーマ定義
+## 7. 会場（Venues）
 
-### 7.1 plan_json スキーマ（Zodによるバリデーション）
+### 7.1 GET `/api/venues` — 会場一覧取得
+
+SSG（Next.js の `generateStaticParams`）から呼び出し、全会場ページを静的生成する。
+
+**レスポンス 200**
+
+```json
+{
+  "venues": [
+    { "id": "uuid", "slug": "tokyo-dome", "name": "東京ドーム", "prefecture": "東京都" },
+    { "id": "uuid", "slug": "k-arena-yokohama", "name": "Kアリーナ横浜", "prefecture": "神奈川県" }
+  ]
+}
+```
+
+---
+
+### 7.2 GET `/api/venues/:slug` — 会場詳細＋周辺ホテル
+
+会場別LPのSSGおよびユーザーリクエスト時に呼び出す。
+
+**レスポンス 200**
+
+```json
+{
+  "id": "uuid",
+  "slug": "tokyo-dome",
+  "name": "東京ドーム",
+  "prefecture": "東京都",
+  "address": "東京都文京区後楽1-3-61",
+  "lat": 35.7057,
+  "lng": 139.7518,
+  "capacity": 55000,
+  "nearby_hotels": [
+    {
+      "name": "東京ドームホテル",
+      "rating": 4.2,
+      "price_from": 12000,
+      "distance_m": 200,
+      "affiliate_links": {
+        "rakuten": "https://travel.rakuten.co.jp/...?af=oshiplan",
+        "jalan": "https://www.jalan.net/...?afid=oshiplan"
+      }
+    },
+    {
+      "name": "水道橋グランドホテル",
+      "rating": 3.9,
+      "price_from": 8000,
+      "distance_m": 350,
+      "affiliate_links": {
+        "rakuten": "https://...",
+        "jalan": "https://..."
+      }
+    }
+  ],
+  "tips": [
+    "コインロッカーは東京ドームシティ内に多数あり",
+    "最寄り駅はJR水道橋駅・都営三田線水道橋駅・東京メトロ後楽園駅"
+  ]
+}
+```
+
+**実装**: 楽天トラベルAPIで `rakuten_area_code` を使って周辺ホテルを検索し、アフィリエイトURLを付与して返す。ISR（revalidate: 3600）でキャッシュする。
+
+---
+
+## 8. スキーマ定義
+
+### 8.1 plan_json スキーマ（Zod）
 
 ```typescript
 const ItineraryItem = z.object({
-  time: z.string().regex(/^\d{2}:\d{2}$/),  // "HH:MM"
+  time: z.string().regex(/^\d{2}:\d{2}$/),
   action: z.string().min(1).max(200),
   cost: z.number().int().nonnegative().nullable(),
 });
 
+const AffiliateLinks = z.object({
+  rakuten: z.string().url().nullable(),
+  jalan: z.string().url().nullable(),
+}).partial();
+
 const Accommodation = z.object({
   name: z.string().min(1).max(100),
-  price: z.number().int().nonnegative(),
-  booking_url: z.string().url().nullable(),
+  area: z.string().max(50).nullable(),
+  price_approx: z.number().int().nonnegative().nullable(),
+  affiliate_links: AffiliateLinks.nullable(),
 });
 
 const TransitInfo = z.object({
@@ -540,6 +525,12 @@ const TransitInfo = z.object({
   name: z.string(),
   cost: z.number().int().nonnegative(),
   duration_min: z.number().int().positive(),
+  booking_url: z.string().url().nullable(),
+});
+
+const GoodsLink = z.object({
+  name: z.string().max(100),
+  amazon_url: z.string().url().nullable(),
 });
 
 const PlanJson = z.object({
@@ -552,34 +543,24 @@ const PlanJson = z.object({
     return: TransitInfo.nullable(),
   }),
   merch_line_advice: z.string().max(500).nullable(),
+  goods_links: z.array(GoodsLink).max(5),
   tips: z.array(z.string().max(200)).max(10),
 });
 ```
 
-### 7.2 subscription_tier の値
+### 8.2 affiliate_type の値
 
 | 値 | 説明 |
 |----|------|
-| `"free"` | 無料プラン（デフォルト） |
-| `"premium_monthly"` | 月額480円のPremiumプラン |
-| `"premium_yearly"` | 年額4,800円のPremiumプラン |
-
-### 7.3 artist category の値
-
-| 値 | 表示名 |
-|----|--------|
-| `"idol"` | アイドル |
-| `"artist"` | アーティスト |
-| `"2.5d"` | 2.5次元 |
-| `"anime"` | アニメ |
-| `"sports"` | スポーツ |
-| `"other"` | その他 |
+| `hotel` | 宿泊予約（楽天トラベル・じゃらん） |
+| `transit` | 交通予約（えきねっと・高速バス等） |
+| `goods` | グッズ購入（Amazon・楽天） |
 
 ---
 
-## 8. LLMプロンプト設計（参考）
+## 9. LLMプロンプト設計
 
-### 8.1 システムプロンプト
+### 9.1 システムプロンプト
 
 ```
 あなたは推し活遠征に精通した日本の旅行プランナーです。
@@ -587,12 +568,13 @@ const PlanJson = z.object({
 
 【ルール】
 - 違法行為（転売・不法侵入・個人宅の特定等）を助長する内容は含めないこと
-- 情報は一般的な知識に基づくこと（確定情報として断言しないこと）
-- 宿泊や交通の価格は概算であることを前提とすること
+- 宿泊・交通の価格は概算であることを明記すること
+- accommodation の affiliate_links フィールドには必ず null を設定すること
+  （アフィリエイトURLはサーバー側で別途付与する）
 - 回答は必ず指定のJSONスキーマに従うこと
 ```
 
-### 8.2 ユーザープロンプト（動的生成）
+### 9.2 ユーザープロンプト（動的生成）
 
 ```
 以下の公演情報をもとに遠征プランを作成してください。
@@ -612,6 +594,9 @@ const PlanJson = z.object({
 【会場周辺情報（Google Maps取得）】
 {{maps_context}}
 
+【宿泊エリア参考（楽天トラベルで後から付与するため名称のみ記載）】
+{{hotel_area_hint}}
+
 【出力形式】
 以下のJSONスキーマに厳密に従って出力してください:
 {{plan_json_schema}}
@@ -619,85 +604,75 @@ const PlanJson = z.object({
 
 ---
 
-## 9. 実装メモ
+## 10. 実装メモ
 
-### 月次リセット（Supabase Scheduled Function）
-
-毎月1日0時（JST）に `users.monthly_ai_used` を一括で0にリセットする。
-
-```sql
-UPDATE users SET monthly_ai_used = 0;
-```
-
-Supabase の `pg_cron` 拡張、または Vercel Cron Jobs で実装。
-
-### キャッシュ戦略（AI生成コスト削減）
-
-同一の `venue_name` × `departure` の組み合わせで過去30日以内に生成されたプランがある場合、`transit` / `accommodation` の基礎情報を再利用してプロンプトに注入することで、AI への出力量を削減する。
-
-### タイムアウト処理
-
-- Claude API への接続タイムアウト：10秒
-- タイムアウト時は `503 AI_UNAVAILABLE` を返し、`monthly_ai_used` は**カウントしない**
-
-### share_token 生成
+### レート制限（Vercel KV）
 
 ```typescript
-import { randomBytes } from "crypto";
-const token = randomBytes(16).toString("hex"); // 32文字の16進数
+// 未ログインユーザー
+const key = `ai_rate:${ip}:${today}`
+const count = await kv.incr(key)
+await kv.expire(key, 86400) // 1日でリセット
+if (count > 3) throw new RateLimitError()
+
+// ログインユーザー
+const key = `ai_rate:${userId}:${today}`
+const count = await kv.incr(key)
+await kv.expire(key, 86400)
+if (count > 10) throw new RateLimitError()
 ```
+
+### アフィリエイトURL生成（楽天トラベル）
+
+```typescript
+function buildRakutenAffiliateUrl(areaCode: string, checkIn: string): string {
+  return `https://travel.rakuten.co.jp/keyword/?f_area=${areaCode}&f_checkin=${checkIn}&af=oshiplan`
+}
+```
+
+### キャッシュ戦略
+
+同一の `venue_name` × `departure` の組み合わせで過去7日以内に生成されたプランがある場合、`transit` の基礎情報（所要時間・費用）をテンプレートとして再利用し、Claude API のトークン数を削減する。
 
 ---
 
-## 10. cURL サンプル集
+## 11. cURL サンプル集
 
-### プロフィール取得
-
-```bash
-curl -X GET https://api.oshiplan.app/api/users/me \
-  -H "Authorization: Bearer <token>"
-```
-
-### 推し登録
+### プラン生成（未ログイン）
 
 ```bash
-curl -X POST https://api.oshiplan.app/api/artists \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d '{"name": "推し A", "category": "idol"}'
-```
-
-### AIプラン生成
-
-```bash
-curl -X POST https://api.oshiplan.app/api/plans/generate \
-  -H "Authorization: Bearer <token>" \
+curl -X POST https://oshiplan.app/api/plans/generate \
   -H "Content-Type: application/json" \
   -d '{
-    "artist_id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
     "event_name": "○○ ARENA TOUR 2026",
     "venue_hint": "東京ドーム",
     "event_date": "2026-08-15",
-    "event_time": "18:00",
     "departure": "名古屋駅",
-    "budget_hint": 40000,
-    "options": {
-      "stay_overnight": true,
-      "merch": true,
-      "pilgrimage": false
-    }
+    "options": { "stay_overnight": true, "merch": true, "pilgrimage": false }
   }'
 ```
 
-### 共有トークン発行
+### アフィリエイトクリック計測
 
 ```bash
-curl -X POST https://api.oshiplan.app/api/plans/<plan_id>/share \
-  -H "Authorization: Bearer <token>"
+curl -X POST https://oshiplan.app/api/affiliate/click \
+  -H "Content-Type: application/json" \
+  -d '{
+    "plan_id": "uuid",
+    "affiliate_type": "hotel",
+    "affiliate_partner": "rakuten",
+    "destination_url": "https://travel.rakuten.co.jp/..."
+  }'
+```
+
+### 会場詳細取得
+
+```bash
+curl https://oshiplan.app/api/venues/tokyo-dome
 ```
 
 ### 共有プラン閲覧（認証不要）
 
 ```bash
-curl -X GET https://api.oshiplan.app/api/shared/abc123xyz
+curl https://oshiplan.app/api/shared/abc123xyz
 ```

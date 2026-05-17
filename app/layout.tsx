@@ -19,7 +19,7 @@ export const metadata: Metadata = {
 export default function RootLayout({
   children,
 }: {
-  children: React.ReactNode;
+  children: import("react").ReactNode;
 }) {
   return (
     <html lang="ja">

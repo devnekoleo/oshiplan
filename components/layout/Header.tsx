@@ -1,15 +1,18 @@
-"use client";
-
 import Link from "next/link";
-import { useState } from "react";
+import { getCurrentUser } from "@/lib/auth";
+import { SignOutButton } from "@/components/auth/SignOutButton";
+import { MobileMenuButton } from "./MobileMenuButton";
 
-export function Header() {
-  const [menuOpen, setMenuOpen] = useState(false);
+export async function Header() {
+  const user = await getCurrentUser();
 
   return (
     <header className="sticky top-0 z-50 border-b border-gray-100 bg-white">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
-        <Link href="/" className="flex items-center gap-2 font-bold text-purple-600">
+        <Link
+          href="/"
+          className="flex items-center gap-2 font-bold text-purple-600"
+        >
           <span className="text-xl">🎵</span>
           <span className="text-lg">OshiPlan</span>
         </Link>
@@ -22,37 +25,37 @@ export function Header() {
           <Link href="/venues" className="hover:text-purple-600">
             会場一覧
           </Link>
-          <Link href="/plans" className="hover:text-purple-600">
-            マイプラン
-          </Link>
-        </nav>
-
-        {/* Mobile hamburger */}
-        <button
-          className="sm:hidden p-2 text-gray-600"
-          onClick={() => setMenuOpen(!menuOpen)}
-          aria-label="メニュー"
-        >
-          <span className="text-xl">{menuOpen ? "✕" : "≡"}</span>
-        </button>
-      </div>
-
-      {/* Mobile menu */}
-      {menuOpen && (
-        <div className="border-t border-gray-100 bg-white px-4 py-4 sm:hidden">
-          <nav className="flex flex-col gap-4 text-sm font-medium text-gray-700">
-            <Link href="/plans/new" onClick={() => setMenuOpen(false)}>
-              プランを作る
-            </Link>
-            <Link href="/venues" onClick={() => setMenuOpen(false)}>
-              会場一覧
-            </Link>
-            <Link href="/plans" onClick={() => setMenuOpen(false)}>
+          {user && (
+            <Link href="/plans" className="hover:text-purple-600">
               マイプラン
             </Link>
-          </nav>
+          )}
+        </nav>
+
+        {/* Auth nav */}
+        <div className="hidden items-center gap-3 sm:flex">
+          {user ? (
+            <SignOutButton />
+          ) : (
+            <>
+              <Link
+                href="/auth/login"
+                className="text-sm font-medium text-gray-700 hover:text-purple-600"
+              >
+                ログイン
+              </Link>
+              <Link
+                href="/auth/register"
+                className="rounded-full bg-purple-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-purple-700"
+              >
+                登録
+              </Link>
+            </>
+          )}
         </div>
-      )}
+
+        <MobileMenuButton user={!!user} />
+      </div>
     </header>
   );
 }

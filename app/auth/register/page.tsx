@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useActionState } from "react";
 import { signUp, signInWithOAuth } from "@/app/auth/actions";
+
+const OAUTH_ENABLED = process.env.NEXT_PUBLIC_OAUTH_ENABLED === "true";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 
@@ -69,24 +71,27 @@ export default function RegisterPage() {
           </Button>
         </form>
 
-        <div className="my-6 flex items-center gap-3 text-sm text-gray-400">
-          <div className="h-px flex-1 bg-gray-200" />
-          または
-          <div className="h-px flex-1 bg-gray-200" />
-        </div>
-
-        <div className="flex flex-col gap-3">
-          <form action={async () => { await signInWithOAuth("apple"); }}>
-            <Button type="submit" variant="secondary" className="w-full">
-              🍎 Appleで登録
-            </Button>
-          </form>
-          <form action={async () => { await signInWithOAuth("google"); }}>
-            <Button type="submit" variant="secondary" className="w-full">
-              G Googleで登録
-            </Button>
-          </form>
-        </div>
+        {OAUTH_ENABLED && (
+          <>
+            <div className="my-6 flex items-center gap-3 text-sm text-gray-400">
+              <div className="h-px flex-1 bg-gray-200" />
+              または
+              <div className="h-px flex-1 bg-gray-200" />
+            </div>
+            <div className="flex flex-col gap-3">
+              <form action={async () => { await signInWithOAuth("apple"); }}>
+                <Button type="submit" variant="secondary" className="w-full">
+                  🍎 Appleで登録
+                </Button>
+              </form>
+              <form action={async () => { await signInWithOAuth("google"); }}>
+                <Button type="submit" variant="secondary" className="w-full">
+                  G Googleで登録
+                </Button>
+              </form>
+            </div>
+          </>
+        )}
 
         <p className="mt-6 text-center text-xs text-gray-400">
           登録することで

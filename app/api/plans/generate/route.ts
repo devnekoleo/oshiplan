@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { PlanJsonSchema } from "@/lib/ai/schema";
 import { SYSTEM_PROMPT, buildUserPrompt } from "@/lib/ai/prompt";
 import { getMapsContext } from "@/lib/maps";
+import { getCachedTransitHint } from "@/lib/ai/cache";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -130,6 +131,9 @@ export async function POST(request: Request) {
   // Google Maps で会場情報取得
   const mapsContext = await getMapsContext(venue_hint, departure);
 
+  // キャッシュ: 同一会場×出発地の過去プランからtransit情報を取得
+  const cachedHint = await getCachedTransitHint(venue_hint, departure);
+
   // Claude API でプラン生成（最大2回リトライ）
   let planJson = null;
   let lastError = "";
@@ -148,7 +152,7 @@ export async function POST(request: Request) {
           merch: options?.merch ?? false,
           pilgrimage: options?.pilgrimage ?? false,
         },
-        mapsContext: mapsContext || undefined,
+        mapsContext: [mapsContext, cachedHint].filter(Boolean).join("\n\n") || undefined,
       });
 
       const message = await anthropic.messages.create({

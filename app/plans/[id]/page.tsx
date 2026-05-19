@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { formatDate } from "@/lib/utils";
 import { PlanResult } from "@/components/plans/PlanResult";
 import { ShareButton } from "@/components/plans/ShareButton";
+import { PlanOfflineCache } from "@/components/plans/PlanOfflineCache";
 import type { Plan } from "@/types";
 
 export async function generateMetadata({
@@ -61,6 +62,8 @@ export default async function PlanDetailPage({
         </p>
       </div>
 
+      {/* オフラインキャッシュ: localStorageに保存して会場でも閲覧可能に */}
+      <PlanOfflineCache plan={p} />
       <PlanResult plan={p} />
     </main>
   );

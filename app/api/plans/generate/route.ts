@@ -5,6 +5,7 @@ import { PlanJsonSchema } from "@/lib/ai/schema";
 import { SYSTEM_PROMPT, buildUserPrompt } from "@/lib/ai/prompt";
 import { getMapsContext } from "@/lib/maps";
 import { getCachedTransitHint } from "@/lib/ai/cache";
+import { checkGuestRateLimit } from "@/lib/rate-limit";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -19,8 +20,7 @@ async function checkRateLimit(
   const today = new Date().toISOString().split("T")[0];
 
   if (!userId) {
-    // ゲスト: IPベースのレート制限（簡易版 - Vercel KV未設定時はIP確認のみ）
-    return true; // Vercel KV設定後に実装
+    return await checkGuestRateLimit(ip);
   }
 
   const { data: user } = await supabase

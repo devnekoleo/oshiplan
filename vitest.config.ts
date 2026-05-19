@@ -7,9 +7,12 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     globals: true,
+    // Playwright の e2e テストを除外
+    exclude: ["**/node_modules/**", "**/tests/e2e/**", "**/*.e2e.spec.*"],
     coverage: {
       provider: "v8",
       reporter: ["text", "lcov"],
+      exclude: ["**/tests/e2e/**", "**/.next/**", "**/node_modules/**"],
     },
   },
   resolve: {

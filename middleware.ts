@@ -1,8 +1,21 @@
-import { type NextRequest } from "next/server";
+import { type NextRequest, NextResponse } from "next/server";
 import { updateSession } from "@/lib/supabase/middleware";
 
 export async function middleware(request: NextRequest) {
-  return await updateSession(request);
+  // 環境変数未設定時はスルーして500を防ぐ
+  if (
+    !process.env.NEXT_PUBLIC_SUPABASE_URL ||
+    !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  ) {
+    return NextResponse.next();
+  }
+
+  try {
+    return await updateSession(request);
+  } catch {
+    // middlewareエラー時はページ表示を優先
+    return NextResponse.next();
+  }
 }
 
 export const config = {

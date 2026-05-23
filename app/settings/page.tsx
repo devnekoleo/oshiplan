@@ -16,10 +16,10 @@ export default async function SettingsPage() {
       <section className="mb-6">
         <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">アカウント</h2>
         <div className="rounded-xl border border-gray-100 bg-white divide-y divide-gray-50">
-          <Link href="/settings/profile" className="flex items-center justify-between px-4 py-3 hover:bg-gray-50">
-            <span className="text-sm text-gray-800">プロフィール編集</span>
-            <span className="text-gray-300">›</span>
-          </Link>
+          <div className="px-4 py-3">
+            <p className="text-sm text-gray-500">メールアドレス</p>
+            <p className="text-sm font-medium text-gray-900">{user.email}</p>
+          </div>
         </div>
       </section>
 
@@ -42,9 +42,7 @@ export default async function SettingsPage() {
         </div>
       </section>
 
-      <div className="flex flex-col gap-3">
-        <SignOutButton />
-      </div>
+      <SignOutButton />
     </main>
   );
 }

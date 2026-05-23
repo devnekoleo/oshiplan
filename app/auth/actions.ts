@@ -18,7 +18,7 @@ export async function signIn(
   if (error) return { error: error.message };
 
   revalidatePath("/", "layout");
-  redirect((formData.get("redirectTo") as string) || "/plans");
+  redirect((formData.get("redirectTo") as string) || "/maps");
 }
 
 export async function signUp(
@@ -31,7 +31,7 @@ export async function signUp(
     email: formData.get("email") as string,
     password: formData.get("password") as string,
     options: {
-      emailRedirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback`,
+      emailRedirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback?next=/maps`,
     },
   });
 
@@ -71,7 +71,7 @@ export async function signInWithOAuth(provider: "google" | "apple") {
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider,
     options: {
-      redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback`,
+      redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback?next=/maps`,
     },
   });
 

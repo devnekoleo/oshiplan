@@ -24,16 +24,10 @@ export function MobileMenuButton({ user }: MobileMenuButtonProps) {
       {open && (
         <div className="absolute left-0 right-0 top-[57px] border-t border-gray-100 bg-white px-4 py-4 sm:hidden">
           <nav className="flex flex-col gap-4 text-sm font-medium text-gray-700">
-            <Link href="/plans/new" onClick={() => setOpen(false)}>
-              プランを作る
-            </Link>
-            <Link href="/venues" onClick={() => setOpen(false)}>
-              会場一覧
-            </Link>
             {user ? (
               <>
-                <Link href="/plans" onClick={() => setOpen(false)}>
-                  マイプラン
+                <Link href="/maps" onClick={() => setOpen(false)}>
+                  マイマップ
                 </Link>
                 <form action={signOut}>
                   <button type="submit" className="text-left text-gray-700">
@@ -43,6 +37,9 @@ export function MobileMenuButton({ user }: MobileMenuButtonProps) {
               </>
             ) : (
               <>
+                <Link href="/maps/new" onClick={() => setOpen(false)}>
+                  マップを作る
+                </Link>
                 <Link href="/auth/login" onClick={() => setOpen(false)}>
                   ログイン
                 </Link>

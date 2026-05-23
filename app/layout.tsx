@@ -4,16 +4,16 @@ import { Header } from "@/components/layout/Header";
 
 export const metadata: Metadata = {
   title: {
-    default: "OshiPlan（オシプラン）| 推し活遠征プランナー",
-    template: "%s | OshiPlan",
+    default: "Viamaps | 旅をもっと楽しく",
+    template: "%s | Viamaps",
   },
   description:
-    "推し活遠征プランをAIが3分で自動生成。交通・宿泊・物販情報を一括確認。完全無料。",
-  keywords: ["推し活", "遠征", "プラン", "AI", "宿泊", "チケット"],
+    "地図にピンを立てて、写真と説明をつけながら旅を記録・計画。ポイント間をスムーズに移動できる新感覚マップサービス。",
+  keywords: ["旅行", "旅行計画", "地図", "マイマップ", "旅行記録"],
   openGraph: {
     type: "website",
     locale: "ja_JP",
-    siteName: "OshiPlan",
+    siteName: "Viamaps",
   },
 };
 

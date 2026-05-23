@@ -1,110 +1,94 @@
-export type ArtistCategory =
-  | "idol"
-  | "artist"
-  | "2.5d"
-  | "anime"
-  | "sports"
-  | "other";
-
-export type AffiliateType = "hotel" | "transit" | "goods";
-
 export interface User {
   id: string;
   email: string;
   display_name: string | null;
-  home_station: string | null;
-  daily_ai_used: number;
-  daily_ai_reset_at: string | null;
   created_at: string;
 }
 
-export interface Artist {
+export interface TravelMap {
   id: string;
   user_id: string;
-  name: string;
-  category: ArtistCategory;
-  created_at: string;
-}
-
-export interface Venue {
-  id: string;
-  slug: string;
-  name: string;
-  prefecture: string;
-  address: string;
-  lat: number;
-  lng: number;
-  capacity: number | null;
-  rakuten_area_code: string | null;
-  created_at: string;
-}
-
-export interface ItineraryItem {
-  time: string;
-  action: string;
-  cost: number | null;
-}
-
-export interface AffiliateLinks {
-  rakuten?: string | null;
-  jalan?: string | null;
-}
-
-export interface Accommodation {
-  name: string;
-  area: string | null;
-  price_approx: number | null;
-  affiliate_links: AffiliateLinks | null;
-}
-
-export interface TransitInfo {
-  type: "shinkansen" | "airplane" | "bus" | "local" | "other";
-  name: string;
-  cost: number;
-  duration_min: number;
-  booking_url: string | null;
-}
-
-export interface GoodsLink {
-  name: string;
-  amazon_url: string | null;
-}
-
-export interface PlanJson {
-  summary: string;
-  estimated_cost: number;
-  itinerary: ItineraryItem[];
-  accommodation: Accommodation | null;
-  transit: {
-    outbound: TransitInfo | null;
-    return: TransitInfo | null;
-  };
-  merch_line_advice: string | null;
-  goods_links: GoodsLink[];
-  tips: string[];
-}
-
-export interface Plan {
-  id: string;
-  user_id: string | null;
-  artist_id: string | null;
-  event_name: string;
-  venue_name: string;
-  venue_slug: string | null;
-  event_date: string;
-  event_time: string | null;
-  departure: string;
-  budget_hint: number | null;
-  plan_json: PlanJson;
-  share_token: string | null;
-  is_archived: boolean;
+  title: string;
+  description: string | null;
+  is_public: boolean;
+  share_token: string;
   created_at: string;
   updated_at: string;
 }
 
-export interface ApiError {
-  error: {
-    code: string;
-    message: string;
+export interface MapPoint {
+  id: string;
+  map_id: string;
+  title: string;
+  description: string | null;
+  lat: number;
+  lng: number;
+  order_index: number;
+  images: PointImage[];
+  created_at: string;
+  day_id: string | null;
+  start_time: string | null;
+  end_time: string | null;
+  cost: number;
+  marker_color: string | null;
+  category: string | null;
+}
+
+export interface MapLine {
+  id: string;
+  map_id: string;
+  day_id: string | null;
+  name: string | null;
+  color: string;
+  width: number;
+  coordinates: [number, number][];
+  created_at: string;}
+
+export interface PointImage {
+  url: string;
+  caption: string | null;
+}
+
+export interface MapDay {
+  id: string;
+  map_id: string;
+  day_number: number;
+  date: string | null;
+  title: string | null;
+  created_at: string;
+}
+
+export interface ChecklistItem {
+  id: string;
+  map_id: string;
+  category: 'packing' | 'todo';
+  label: string;
+  is_checked: boolean;
+  order_index: number;
+  created_at: string;
+}
+
+export const DAY_COLORS = [
+  '#3B82F6', // blue-500   — Day 1
+  '#10B981', // emerald-500 — Day 2
+  '#F59E0B', // amber-500  — Day 3
+  '#8B5CF6', // violet-500 — Day 4
+  '#EF4444', // red-500    — Day 5
+  '#06B6D4', // cyan-500   — Day 6
+  '#F97316', // orange-500 — Day 7
+  '#EC4899', // pink-500   — Day 8+
+];
+
+export function getDayColor(dayNumber: number): string {
+  return DAY_COLORS[(dayNumber - 1) % DAY_COLORS.length];
+}
+
+export function getCategoryIcon(category: string): string {
+  const icons: Record<string, string> = {
+    spot: '📍',
+    restaurant: '🍽️',
+    hotel: '🏨',
+    transport: '🚗',
   };
+  return icons[category] ?? '📍';
 }

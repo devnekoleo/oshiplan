@@ -1,5 +1,5 @@
 {
-  "name": "oshiplan",
+  "name": "viamaps",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -15,18 +15,16 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.52.0",
-    "@hookform/resolvers": "^5.0.1",
-    "@supabase/ssr": "^0.6.1",
-    "@supabase/supabase-js": "^2.49.4",
-    "@tanstack/react-query": "^5.74.4",
+    "@supabase/ssr": "^0.10.3",
+    "@supabase/supabase-js": "^2.106.1",
+    "@types/mapbox-gl": "^3.4.1",
     "clsx": "^2.1.1",
+    "mapbox-gl": "^3.24.0",
     "next": "^15.3.2",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "react-hook-form": "^7.56.3",
-    "zod": "^3.24.4",
-    "zustand": "^5.0.4"
+    "react-map-gl": "^8.1.1",
+    "zod": "^3.24.4"
   },
   "devDependencies": {
     "@playwright/test": "^1.52.0",

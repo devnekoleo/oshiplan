@@ -11,23 +11,21 @@ export async function Header() {
       <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
         <Link
           href="/"
-          className="flex items-center gap-2 font-bold text-purple-600"
+          className="flex items-center gap-2 font-bold text-blue-600"
         >
-          <span className="text-xl">🎵</span>
-          <span className="text-lg">OshiPlan</span>
+          <span className="text-xl">📍</span>
+          <span className="text-lg">viamaps</span>
         </Link>
 
         {/* PC nav */}
         <nav className="hidden items-center gap-6 text-sm font-medium text-gray-700 sm:flex">
-          <Link href="/plans/new" className="hover:text-purple-600">
-            プランを作る
-          </Link>
-          <Link href="/venues" className="hover:text-purple-600">
-            会場一覧
-          </Link>
-          {user && (
-            <Link href="/plans" className="hover:text-purple-600">
-              マイプラン
+          {user ? (
+            <Link href="/maps" className="hover:text-blue-600">
+              マイマップ
+            </Link>
+          ) : (
+            <Link href="/maps/new" className="hover:text-blue-600">
+              マップを作る
             </Link>
           )}
         </nav>
@@ -40,13 +38,13 @@ export async function Header() {
             <>
               <Link
                 href="/auth/login"
-                className="text-sm font-medium text-gray-700 hover:text-purple-600"
+                className="text-sm font-medium text-gray-700 hover:text-blue-600"
               >
                 ログイン
               </Link>
               <Link
                 href="/auth/register"
-                className="rounded-full bg-purple-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-purple-700"
+                className="rounded-full bg-blue-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-blue-700"
               >
                 登録
               </Link>

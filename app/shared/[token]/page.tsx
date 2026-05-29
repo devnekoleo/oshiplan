@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import { headers } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 import { MapViewer } from "@/components/maps/MapViewer";
 import type { TravelMap, MapPoint, MapDay, MapLine } from "@/types";
@@ -6,8 +7,39 @@ import type { TravelMap, MapPoint, MapDay, MapLine } from "@/types";
 export async function generateMetadata({ params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
   const supabase = await createClient();
-  const { data } = await supabase.from("maps").select("title").eq("share_token", token).eq("is_public", true).single();
-  return { title: data?.title ? `${data.title} — Viamaps` : "共有マップ | Viamaps" };
+  const { data } = await supabase
+    .from("maps")
+    .select("title, description")
+    .eq("share_token", token)
+    .eq("is_public", true)
+    .single();
+
+  if (!data) return { title: "共有マップ | Viamaps" };
+
+  const h = await headers();
+  const host = h.get("x-forwarded-host") ?? h.get("host") ?? "oshiplan.vercel.app";
+  const proto = h.get("x-forwarded-proto") ?? "https";
+  const url = `${proto}://${host}/shared/${token}`;
+
+  const title = `${data.title} — Viamaps`;
+  const description = data.description ?? `${data.title}の旅行マップ — Viamapsで作成`;
+
+  return {
+    title,
+    description,
+    openGraph: {
+      title,
+      description,
+      url,
+      type: "website",
+      siteName: "Viamaps",
+    },
+    twitter: {
+      card: "summary",
+      title,
+      description,
+    },
+  };
 }
 
 export default async function SharedMapPage({ params }: { params: Promise<{ token: string }> }) {

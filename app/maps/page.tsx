@@ -4,7 +4,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { deleteMap } from "./actions";
+import { MapCardActions } from "./MapCardActions";
 import type { TravelMap } from "@/types";
 
 export const metadata = { title: "マイマップ" };
@@ -101,7 +101,7 @@ export default async function MapsPage() {
                   </p>
 
                   {/* Actions */}
-                  <div className="mt-4 flex items-center gap-2">
+                  <div className="mt-4 flex items-center gap-2 flex-wrap">
                     <Link href={`/maps/${map.id}`} className="flex-1">
                       <button className="w-full rounded-full bg-blue-600 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-blue-700">
                         編集
@@ -114,19 +114,7 @@ export default async function MapsPage() {
                         </button>
                       </Link>
                     )}
-                    <form
-                      action={async () => {
-                        "use server";
-                        await deleteMap(map.id);
-                      }}
-                    >
-                      <button
-                        type="submit"
-                        className="rounded-full border border-red-100 px-3 py-1.5 text-sm font-medium text-red-500 transition hover:bg-red-50"
-                      >
-                        削除
-                      </button>
-                    </form>
+                    <MapCardActions mapId={map.id} title={map.title} />
                   </div>
                 </div>
               </div>

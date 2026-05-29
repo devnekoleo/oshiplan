@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/Input";
 
 interface MapSettingsFormProps {
   mapId: string;
+  shareToken: string;
   initialTitle: string;
   initialDescription: string;
   initialIsPublic: boolean;
@@ -15,6 +16,7 @@ interface MapSettingsFormProps {
 
 export function MapSettingsForm({
   mapId,
+  shareToken,
   initialTitle,
   initialDescription,
   initialIsPublic,
@@ -27,7 +29,7 @@ export function MapSettingsForm({
   const [saved, setSaved]       = useState(false);
 
   const origin   = typeof window !== "undefined" ? window.location.origin : "https://viamaps.app";
-  const shareUrl = `${origin}/maps/${mapId}/view`;
+  const shareUrl = `${origin}/shared/${shareToken}`;
   const embedCode = `<iframe src="${shareUrl}" width="600" height="450" style="border:0" allowfullscreen loading="lazy"></iframe>`;
 
   const copyLink = () => {

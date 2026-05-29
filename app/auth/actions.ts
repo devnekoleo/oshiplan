@@ -2,7 +2,16 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { headers } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
+
+async function getOrigin(): Promise<string> {
+  const h = await headers();
+  const proto = h.get("x-forwarded-proto") ?? "https";
+  const host = h.get("x-forwarded-host") ?? h.get("host");
+  if (host) return `${proto}://${host}`;
+  return process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+}
 
 export async function signIn(
   _prevState: { error: string } | null,
@@ -27,11 +36,12 @@ export async function signUp(
 ): Promise<{ error: string; success?: boolean } | null> {
   const supabase = await createClient();
 
+  const origin = await getOrigin();
   const { error } = await supabase.auth.signUp({
     email: formData.get("email") as string,
     password: formData.get("password") as string,
     options: {
-      emailRedirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback?next=/maps`,
+      emailRedirectTo: `${origin}/auth/callback?next=/maps`,
     },
   });
 
@@ -53,10 +63,11 @@ export async function resetPassword(
 ): Promise<{ error: string; success?: boolean } | null> {
   const supabase = await createClient();
 
+  const origin = await getOrigin();
   const { error } = await supabase.auth.resetPasswordForEmail(
     formData.get("email") as string,
     {
-      redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback`,
+      redirectTo: `${origin}/auth/callback`,
     }
   );
 
@@ -67,11 +78,12 @@ export async function resetPassword(
 
 export async function signInWithOAuth(provider: "google" | "apple") {
   const supabase = await createClient();
+  const origin = await getOrigin();
 
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider,
     options: {
-      redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback?next=/maps`,
+      redirectTo: `${origin}/auth/callback?next=/maps`,
     },
   });
 

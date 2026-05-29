@@ -19,7 +19,7 @@ export default async function HomePage() {
 
         <div className="mt-8 flex flex-col items-center gap-3 sm:flex-row">
           <Link
-            href="/maps/new"
+            href={user ? "/maps/new" : "/auth/register"}
             className="inline-flex items-center gap-2 rounded-full bg-blue-600 px-8 py-4 text-base font-semibold text-white shadow-lg transition hover:bg-blue-700"
           >
             🗺️ マップを作る（無料）
@@ -71,12 +71,12 @@ export default async function HomePage() {
 
       {/* CTA */}
       <section className="px-4 py-14 text-center">
-        <p className="mb-4 text-gray-600">ログイン不要で今すぐ試せます</p>
+        <p className="mb-4 text-gray-600">無料で今すぐはじめられます</p>
         <Link
-          href="/maps/new"
+          href={user ? "/maps/new" : "/auth/register"}
           className="inline-flex items-center gap-2 rounded-full bg-blue-600 px-8 py-3 text-sm font-semibold text-white shadow transition hover:bg-blue-700"
         >
-          無料でマップを作る →
+          {user ? "新しいマップを作る →" : "無料で始める →"}
         </Link>
       </section>
     </main>

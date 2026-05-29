@@ -11,6 +11,7 @@ export async function createPoint(
     description: string;
     lat: number;
     lng: number;
+    images?: PointImage[];
     day_id?: string | null;
     start_time?: string | null;
     end_time?: string | null;
@@ -18,7 +19,7 @@ export async function createPoint(
     marker_color?: string | null;
     category?: string;
   }
-): Promise<{ error?: string; id?: string }> {
+): Promise<{ error?: string; id?: string; order_index?: number }> {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: "ログインが必要です" };
@@ -42,6 +43,7 @@ export async function createPoint(
       lat: data.lat,
       lng: data.lng,
       order_index: nextOrder,
+      images: data.images ?? [],
       day_id: data.day_id ?? null,
       start_time: data.start_time ?? null,
       end_time: data.end_time ?? null,
@@ -52,10 +54,10 @@ export async function createPoint(
     .select()
     .single();
 
-  if (error || !point) return { error: "ポイントの作成に失敗しました" };
+  if (error || !point) return { error: error?.message ?? "ポイントの作成に失敗しました" };
 
   revalidatePath(`/maps/${mapId}`);
-  return { id: point.id };
+  return { id: point.id, order_index: nextOrder };
 }
 
 export async function updatePoint(
@@ -93,7 +95,7 @@ export async function updatePoint(
     .eq("id", pointId)
     .eq("map_id", mapId);
 
-  if (error) return { error: "更新に失敗しました" };
+  if (error) return { error: error.message ?? "更新に失敗しました" };
 
   revalidatePath(`/maps/${mapId}`);
   return {};

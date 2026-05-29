@@ -1,335 +1,312 @@
 # Viamaps API 仕様書
 
-Google マイマップ × tabiori の機能を持つ旅行地図サービス
-
-2026年5月 / Version 2.0
+2026年5月 / **Version 3.0（フルリビルド版）**
 
 ---
 
-## 0. 概要
+## 1. 概要
 
-Viamaps のデータ操作は主に **Next.js Server Actions** で実装する。REST API Route Handlers は認証コールバックのみ。外部 API（Mapbox Geocoding・Directions）はクライアントサイドから直接呼び出す。
+本書は Viamaps v3.0 が利用・提供する API の仕様を定義する。
 
-### ベース URL
-
-```
-https://viamaps.app   （本番）
-http://localhost:3000  （開発）
-```
-
-### 実装方針
-
-| 操作 | 実装方法 |
-|------|---------|
-| データ取得（読み取り） | Server Component 内で直接 Supabase クエリ |
-| データ変更（書き込み） | Server Actions（`"use server"` 関数） |
-| OAuth コールバック | Route Handler（`/auth/callback`） |
-| 場所検索 | Mapbox Geocoding API（クライアント直接、デバウンス 400ms） |
-| 道路ルート | Mapbox Directions API（クライアント直接、非同期フェッチ） |
+| 区分 | 提供 |
+|------|------|
+| 1. 外部 API | Google Maps Platform / Supabase / Sentry |
+| 2. 内部 API | Next.js Route Handler `/api/*` |
+| 3. Server Actions | Next.js Server Actions（フォーム送信用） |
+| 4. Supabase RPC | Postgres ストアド関数 |
+| 5. Public Embed API | `/api/embed/[mapId]` 軽量公開エンドポイント |
 
 ---
 
-## 1. Server Actions
+## 2. 外部 API 利用
 
-### 1.1 マップ操作（`app/maps/actions.ts`）
+### 2.1 Google Maps JavaScript API
 
-#### `createMap(prevState, formData)`
+**読込**：クライアント側で `@vis.gl/react-google-maps` 経由でロード。
 
-新規マップを作成してエディタにリダイレクト。
-
-```typescript
-// formData
-{ title: string; description?: string; }
-// 成功: redirect('/maps/{id}')
-// 失敗: { error: string }
+```ts
+<APIProvider apiKey={process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY!}>
+  <Map mapId={process.env.NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID!} ... />
+</APIProvider>
 ```
 
-#### `updateMap(id, prevState, formData)`
+**ライブラリ**：`places`, `geometry`, `drawing`, `marker`（Advanced Markers）
 
-マップのタイトル・説明・公開設定を更新。成功後 `/maps/{id}` にリダイレクト。
+**制限**：HTTP リファラ制限（`*.viamaps.app/*`, `localhost:*`）
 
-```typescript
-// formData
-{ title: string; description?: string; is_public?: "true"; }
-// 成功: redirect('/maps/{id}')
-// 失敗: { error: string }
-```
+### 2.2 Google Places API (New)
 
-#### `deleteMap(id)`
+#### 2.2.1 Autocomplete (クライアント直叩き不可、サーバー経由)
 
-マップと全関連データ（days・points・lines・checklist）を削除して `/maps` にリダイレクト。
+| 項目 | 値 |
+|------|---|
+| エンドポイント | `POST https://places.googleapis.com/v1/places:autocomplete` |
+| 認証 | サーバーキー（X-Goog-Api-Key ヘッダ） |
+| 入力 | `{ input, languageCode: "ja", regionCode: "JP", locationBias: {...} }` |
+| 出力 | `{ suggestions: [{ placePrediction: { placeId, text } }] }` |
+
+#### 2.2.2 Place Details
+
+| 項目 | 値 |
+|------|---|
+| エンドポイント | `GET https://places.googleapis.com/v1/places/{placeId}` |
+| 認証 | サーバーキー |
+| FieldMask（必須） | `id,displayName,location,formattedAddress,photos,rating,userRatingCount,websiteUri,internationalPhoneNumber,regularOpeningHours,types` |
+| 出力 | Place オブジェクト |
+
+### 2.3 Google Directions API
+
+| 項目 | 値 |
+|------|---|
+| エンドポイント | `POST https://routes.googleapis.com/directions/v2:computeRoutes` |
+| 認証 | サーバーキー |
+| 入力 | `{ origin, destination, intermediates[], travelMode, computeAlternativeRoutes: false }` |
+| FieldMask | `routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline,routes.legs.duration,routes.legs.distanceMeters` |
+| キャッシュ | 同一リクエストは Supabase `route_cache` テーブルに 24h キャッシュ |
+
+### 2.4 Supabase
+
+- **Auth**：`@supabase/ssr` でクッキーベース SSR 対応
+- **DB**：RLS 適用 PostgREST
+- **Realtime**：`maps`, `points`, `map_days` テーブルを購読（共同編集）
+- **Storage**：`map-covers/` `point-images/` バケット
 
 ---
 
-### 1.2 ポイント操作（`app/maps/[id]/actions.ts`）
+## 3. 内部 API（Route Handler）
 
-#### `createPoint(mapId, data)`
+すべて `/api/*` 配下に配置。レスポンスは JSON。エラーは `{ error: { code, message } }` 形式。
 
-マップにポイントを追加。`order_index` は既存最大値 + 1 が自動設定。
+### 3.1 認証関連
 
-```typescript
-data: {
+| Method | Path | 説明 |
+|--------|------|------|
+| POST | `/api/auth/signup` | メールサインアップ |
+| POST | `/api/auth/login` | ログイン |
+| POST | `/api/auth/logout` | ログアウト |
+| GET | `/api/auth/oauth/google` | Google OAuth リダイレクト開始 |
+| GET | `/api/auth/oauth/callback` | OAuth コールバック |
+
+### 3.2 Places プロキシ
+
+| Method | Path | 説明 |
+|--------|------|------|
+| POST | `/api/places/autocomplete` | Autocomplete 検索（サーバー経由でキー隠蔽） |
+| GET | `/api/places/details?placeId=...` | Place Details 取得（24h キャッシュ） |
+
+**Request Body (autocomplete)**:
+```json
+{ "input": "東京駅", "lng": 139.7, "lat": 35.6, "radius": 50000 }
+```
+
+**Response**:
+```json
+{
+  "suggestions": [
+    { "placeId": "ChIJ...", "primaryText": "東京駅", "secondaryText": "東京都千代田区..." }
+  ]
+}
+```
+
+### 3.3 Directions プロキシ
+
+| Method | Path | 説明 |
+|--------|------|------|
+| POST | `/api/directions` | ルート計算（キャッシュ付き） |
+
+**Request Body**:
+```json
+{
+  "waypoints": [
+    { "lng": 139.7, "lat": 35.6 },
+    { "lng": 139.71, "lat": 35.65 }
+  ],
+  "travelMode": "DRIVE"
+}
+```
+
+**Response**:
+```json
+{
+  "encodedPolyline": "abcd...",
+  "distanceMeters": 12500,
+  "durationSeconds": 1850,
+  "legs": [{ "distanceMeters": 12500, "durationSeconds": 1850 }]
+}
+```
+
+### 3.4 マップ API
+
+| Method | Path | 説明 |
+|--------|------|------|
+| GET | `/api/maps` | 自分のマップ一覧 |
+| POST | `/api/maps` | マップ作成 |
+| GET | `/api/maps/[id]` | マップ詳細（含む points, days, lines） |
+| PATCH | `/api/maps/[id]` | マップ更新 |
+| DELETE | `/api/maps/[id]` | マップ削除 |
+| POST | `/api/maps/[id]/duplicate` | マップ複製 |
+
+### 3.5 ポイント API
+
+| Method | Path | 説明 |
+|--------|------|------|
+| POST | `/api/maps/[id]/points` | ポイント作成 |
+| PATCH | `/api/points/[id]` | ポイント更新 |
+| DELETE | `/api/points/[id]` | ポイント削除 |
+| POST | `/api/points/reorder` | 並び替え（一括 order_index 更新） |
+
+**Point スキーマ**:
+```ts
+{
+  id: string;
+  map_id: string;
+  day_id: string | null;
+  place_id: string | null;        // Google Place ID
   title: string;
-  description: string;
-  lat: number;
+  description: string | null;
   lng: number;
-  day_id?: string | null;       // 日程割り当て
-  start_time?: string | null;   // "HH:MM" 形式
-  end_time?: string | null;
-  cost?: number;                 // 費用（円）
-  category?: string;            // "spot"|"restaurant"|"hotel"|"transport"
-  marker_color?: string | null; // "#RRGGBB" or null（日程カラーに従う）
+  lat: number;
+  marker_color: string;            // hex
+  category: string | null;
+  start_time: string | null;       // HH:MM
+  end_time: string | null;
+  cost: number | null;
+  image_url: string | null;
+  order_index: number;
+  created_at: string;
+  updated_at: string;
 }
-// 戻り値: { id?: string; error?: string }
 ```
 
-#### `updatePoint(mapId, pointId, data)`
+### 3.6 日程 API
 
-ポイントのすべてのフィールドを更新。
+| Method | Path | 説明 |
+|--------|------|------|
+| POST | `/api/maps/[id]/days` | Day 追加 |
+| PATCH | `/api/days/[id]` | Day 更新 |
+| DELETE | `/api/days/[id]` | Day 削除 |
+| POST | `/api/days/reorder` | Day 並び替え |
 
-```typescript
-data: {
-  title: string;
-  description: string;
-  images: PointImage[];         // { url: string; caption: string | null }[]
-  day_id?: string | null;
-  start_time?: string | null;
-  end_time?: string | null;
-  cost?: number;
-  category?: string;
-  marker_color?: string | null;
-}
-// 戻り値: { error?: string }
-```
+### 3.7 描画 API
 
-#### `deletePoint(mapId, pointId)`
+| Method | Path | 説明 |
+|--------|------|------|
+| POST | `/api/maps/[id]/lines` | 描画オブジェクト作成 |
+| PATCH | `/api/lines/[id]` | 更新 |
+| DELETE | `/api/lines/[id]` | 削除 |
 
-```typescript
-// 戻り値: { error?: string }
-```
+### 3.8 チェックリスト API
 
-#### `reorderPoints(mapId, orderedIds)`
+| Method | Path | 説明 |
+|--------|------|------|
+| GET | `/api/maps/[id]/checklist` | リスト取得 |
+| POST | `/api/maps/[id]/checklist` | アイテム追加 |
+| PATCH | `/api/checklist/[id]` | チェック切替・編集 |
+| DELETE | `/api/checklist/[id]` | 削除 |
 
-ポイントの並び順を一括更新。
+### 3.9 共同編集 API
 
-```typescript
-orderedIds: string[] // 新しい順序のポイント ID 配列
-// 戻り値: { error?: string }
-```
+| Method | Path | 説明 |
+|--------|------|------|
+| POST | `/api/maps/[id]/invites` | 招待リンク作成 |
+| GET | `/api/invites/[token]` | 招待情報取得（権限） |
+| POST | `/api/invites/[token]/accept` | 招待承諾 |
+| GET | `/api/maps/[id]/collaborators` | 共同編集者一覧 |
+| DELETE | `/api/collaborators/[id]` | 共同編集者削除 |
 
----
+### 3.10 公開 Embed API
 
-### 1.3 日程操作（`app/maps/[id]/actions.ts`）
+| Method | Path | 説明 |
+|--------|------|------|
+| GET | `/api/embed/[mapId]` | 公開マップの軽量データ（認証不要） |
 
-#### `addDay(mapId)`
-
-新しい日程を追加。`day_number` は既存最大値 + 1 が自動設定。
-
-```typescript
-// 戻り値: { id?: string; day_number?: number; error?: string }
-```
-
-#### `updateDay(dayId, data)`
-
-日程のタイトル・日付を更新。
-
-```typescript
-data: { title?: string; date?: string; } // date: "YYYY-MM-DD"
-// 戻り値: { error?: string }
-```
-
-#### `deleteDay(dayId, mapId)`
-
-日程を削除。配下のポイントの `day_id` は NULL になる（SET NULL 制約）。
-
-```typescript
-// 戻り値: { error?: string }
-```
-
----
-
-### 1.4 描画ライン操作（`app/maps/[id]/actions.ts`）
-
-#### `createLine(mapId, data)`
-
-描画ラインを保存。
-
-```typescript
-data: {
-  name?: string;
-  color: string;                      // "#RRGGBB"
-  width: number;                      // デフォルト 3
-  coordinates: [number, number][];    // [[lng, lat], ...]
-  day_id?: string | null;
-}
-// 戻り値: { id?: string; error?: string }
-```
-
-#### `deleteLine(lineId, mapId)`
-
-```typescript
-// 戻り値: { error?: string }
-```
-
----
-
-### 1.5 チェックリスト操作（`app/maps/[id]/actions.ts`）
-
-#### `addChecklistItem(mapId, data)`
-
-```typescript
-data: { category: "packing" | "todo"; label: string; }
-// 戻り値: { id?: string; error?: string }
-```
-
-#### `toggleChecklistItem(itemId, is_checked)`
-
-```typescript
-is_checked: boolean
-// 戻り値: { error?: string }
-```
-
-#### `deleteChecklistItem(itemId)`
-
-```typescript
-// 戻り値: { error?: string }
-```
-
----
-
-### 1.6 認証操作（`app/auth/actions.ts`）
-
-#### `signIn(prevState, formData)`
-
-メール・パスワードでログイン。成功時は `redirectTo` または `/maps` にリダイレクト。
-
-```typescript
-// formData: { email, password, redirectTo? }
-```
-
-#### `signUp(prevState, formData)`
-
-新規アカウント作成。確認メール送信後、成功状態を返す。
-
-```typescript
-// 成功: { error: "", success: true }
-// 失敗: { error: string }
-```
-
-#### `signOut()`
-
-ログアウトし、トップページにリダイレクト。
-
----
-
-## 2. Route Handlers
-
-### `GET /auth/callback`
-
-OAuth コールバック処理（Google OAuth）。
-
-```
-パラメータ: ?code={認可コード}&next={リダイレクト先}
-
-処理:
-1. supabase.auth.exchangeCodeForSession(code)
-2. 成功: redirect(origin + next)  ※ next デフォルトは /maps
-3. 失敗: redirect('/auth/login?error=認証に失敗しました')
-```
-
----
-
-## 3. データ取得（Server Component）
-
-### マイマップ一覧（`/maps`）
-
-```typescript
-// ポイント数を含む
-const { data: maps } = await supabase
-  .from('maps')
-  .select('*, points(count)')
-  .eq('user_id', user.id)
-  .order('updated_at', { ascending: false });
-```
-
-### マップエディタ（`/maps/[id]`）
-
-```typescript
-// 並列取得
-const [{ data: points }, { data: days }, { data: lines }] = await Promise.all([
-  supabase.from('points').select('*').eq('map_id', id).order('order_index', { ascending: true }),
-  supabase.from('map_days').select('*').eq('map_id', id).order('day_number', { ascending: true }),
-  supabase.from('map_lines').select('*').eq('map_id', id).order('created_at', { ascending: true }),
-]);
-```
-
-### ビューアモード・共有マップ
-
-```typescript
-// オーナー または 公開マップのみ
-const { data: map } = await supabase
-  .from('maps').select('*').eq('id', id)
-  .or(`user_id.eq.${user.id},is_public.eq.true`).single();
-
-// days・points も取得
-```
-
----
-
-## 4. 外部 API（クライアントサイド）
-
-### Mapbox Geocoding API（場所検索）
-
-```
-GET https://api.mapbox.com/geocoding/v5/mapbox.places/{query}.json
-  ?access_token={NEXT_PUBLIC_MAPBOX_TOKEN}
-  &language=ja
-  &limit=5
-
-レスポンス:
+**Response** (キャッシュ ISR 60s):
+```json
 {
-  features: [{
-    id: string;
-    place_name: string;
-    center: [number, number]; // [lng, lat]
-  }]
+  "map": { "id", "title", "description", "cover_url" },
+  "days": [...],
+  "points": [...],
+  "lines": [...]
 }
 ```
-
-デバウンス 400ms。入力クリア or 結果選択でドロップダウンを閉じる。
-
-### Mapbox Directions API（道路ルート）
-
-```
-GET https://api.mapbox.com/directions/v5/mapbox/driving/{coordinates}
-  ?geometries=geojson
-  &overview=full
-  &access_token={NEXT_PUBLIC_MAPBOX_TOKEN}
-
-座標形式: lng1,lat1;lng2,lat2;...  （最大25ウェイポイント）
-
-レスポンス:
-{
-  routes: [{
-    geometry: { type: "LineString"; coordinates: [number, number][] };
-    distance: number; // メートル
-    duration: number; // 秒
-  }]
-}
-```
-
-日程内ポイントが変更されるたびに非同期でフェッチ。失敗時は直線フォールバック。
 
 ---
 
-## 5. エラーハンドリング
+## 4. Server Actions
 
-| 戻り値 | 意味 |
-|-------|------|
-| `null` | 成功（エラーなし） |
-| `{ error: string }` | バリデーションまたは DB エラー |
-| `redirect(path)` | 成功後リダイレクト（NEXT_REDIRECT throw） |
-| `{ id: string }` | 作成成功（ID を返す場合） |
-| `{ id, day_number }` | 日程追加成功 |
+`'use server'` 関数として実装、フォーム経由で呼出。
 
-クライアントは `useActionState` でエラー状態を管理し、フォーム上にエラーメッセージを表示。
+| 関数 | 用途 |
+|------|------|
+| `createMap(formData)` | マップ作成 |
+| `updateMap(mapId, formData)` | マップ更新（redirect with revalidate） |
+| `deleteMap(mapId)` | マップ削除 |
+| `savePoint(formData)` | ポイント保存（下書き → 永続化） |
+| `discardDraft()` | 下書き破棄（クライアント側 state リセットのみ） |
+
+---
+
+## 5. Supabase RPC
+
+| 関数 | 引数 | 戻り値 | 用途 |
+|------|------|-------|------|
+| `reorder_points(p_map_id, p_orders jsonb)` | マップID, [{id, order_index}] | void | ポイント一括並び替え（トランザクション） |
+| `reorder_days(p_map_id, p_orders jsonb)` | 同上 | void | Day 一括並び替え |
+| `get_map_full(p_map_id uuid)` | マップID | jsonb | マップ + days + points + lines をまとめて返す（N+1 回避） |
+| `clone_map(p_source_id uuid)` | 元マップID | uuid (新ID) | マップ複製 |
+
+---
+
+## 6. エラーコード
+
+| code | HTTP | 意味 |
+|------|------|------|
+| `unauthorized` | 401 | 未認証 |
+| `forbidden` | 403 | 権限不足（RLS 違反） |
+| `not_found` | 404 | リソース不在 |
+| `validation_error` | 400 | 入力検証エラー（detail 付き） |
+| `rate_limited` | 429 | レート制限超過 |
+| `external_api_error` | 502 | Google API 失敗 |
+| `internal_error` | 500 | サーバーエラー |
+
+---
+
+## 7. レート制限
+
+| 対象 | 制限 |
+|------|------|
+| `/api/places/autocomplete` | 100 req/min/user |
+| `/api/directions` | 30 req/min/user |
+| `/api/places/details` | 60 req/min/user |
+| その他 `/api/*` | 300 req/min/user |
+
+実装：Vercel Edge Config + IP/UID キー。
+
+---
+
+## 8. キャッシュ戦略
+
+| 対象 | キャッシュ | TTL |
+|------|----------|----|
+| `/api/embed/[mapId]` | ISR | 60s |
+| Place Details | Supabase `place_cache` テーブル | 24h |
+| Directions 結果 | Supabase `route_cache` | 24h |
+| マップ一覧 | RSC fetch revalidate | 30s |
+
+---
+
+## 9. Webhook（将来用）
+
+| イベント | エンドポイント |
+|--------|--------------|
+| マップ公開 | `POST /api/webhooks/map-published` |
+| 共同編集者追加 | `POST /api/webhooks/collaborator-added` |
+
+v3.0 では未実装、v3.2 で導入予定。
+
+---
+
+**Version 履歴**
+- v1.0 (2026-04)
+- v2.0 (2026-05-22)
+- **v3.0 (2026-05-23): Google Maps Platform API へ全面切替、内部 API を REST + Server Actions へ整理**

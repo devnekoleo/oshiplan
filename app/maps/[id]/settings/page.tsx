@@ -31,6 +31,7 @@ export default async function MapSettingsPage({ params }: { params: Promise<{ id
   return (
     <MapSettingsForm
       mapId={id}
+      shareToken={m.share_token}
       initialTitle={m.title}
       initialDescription={m.description ?? ""}
       initialIsPublic={m.is_public}

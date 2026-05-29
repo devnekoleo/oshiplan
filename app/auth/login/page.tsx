@@ -53,7 +53,12 @@ function LoginForm() {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
 
     if (error) {
-      setError(error.message);
+      const msg = error.message.includes("Invalid login credentials")
+        ? "メールアドレスまたはパスワードが正しくありません"
+        : error.message.includes("Email not confirmed")
+        ? "メール確認が完了していません。受信箱をご確認ください"
+        : error.message;
+      setError(msg);
       setLoading(false);
       return;
     }
@@ -73,7 +78,7 @@ function LoginForm() {
       },
     });
     if (error) {
-      setError(error.message);
+      setError("Googleログインに失敗しました: " + error.message);
       setGoogleLoading(false);
     }
   };

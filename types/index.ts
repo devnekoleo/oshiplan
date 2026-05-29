@@ -55,6 +55,7 @@ export interface MapDay {
   day_number: number;
   date: string | null;
   title: string | null;
+  color: string | null;
   created_at: string;
 }
 

@@ -1,340 +1,482 @@
 # Viamaps システム設計書
 
-Google マイマップ × tabiori の機能を持つ旅行地図サービス
-
-2026年5月 / Version 2.0
+2026年5月 / **Version 3.0（フルリビルド版）**
 
 ---
 
-## 1. システム概要
+## 1. 概要
 
-Viamaps は、Mapbox GL JS を使った地図上でユーザーがポイントを日程ごとに作成・管理し、Mapbox Directions API による実際の道路ルートを表示しながら「← →」によるスムーズなポイント間ナビゲーションを提供する旅行地図 Web サービス。
+本書は Viamaps v3.0 のシステムアーキテクチャ・データモデル・状態管理設計を定義する。
 
-### 1.1 設計方針
-
-- 個人開発として最小コスト・最小運用負荷で立ち上げる
-- **モバイルファースト**：現地での閲覧を想定したスマホ最適化
-- **サーバーレス**：Vercel + Supabase でインフラ管理をゼロに
-- Server Actions を主なデータ変更手段とし、API Routes は最小限
-- クライアントサイドは Mapbox GL JS（react-map-gl 経由）のみ重い依存を持つ
+v3.0 で再設計する3つの中核領域：
+1. **状態管理アーキテクチャ**（モード / 下書き / 編集 / ホバー / 選択を分離）
+2. **データモデル**（Place ID 統合、共同編集対応）
+3. **同期戦略**（楽観更新 + Supabase Realtime + 競合検出）
 
 ---
 
 ## 2. システムアーキテクチャ
 
-### 2.1 全体構成
+### 2.1 全体構成図
 
 ```
-┌──────────────────────────────────────────────────┐
-│          Browser (PC / Smartphone)               │
-│          Next.js App Router (React 19)           │
-│          Tailwind CSS / Mapbox GL JS             │
-└───────────────────┬──────────────────────────────┘
-                    │ HTTPS
-                    ▼
-┌──────────────────────────────────────────────────┐
-│          Vercel（Next.js ホスティング）           │
-│          Server Components（SSR）                │
-│          Server Actions（データ変更）            │
-└─────────────┬────────────────────────────────────┘
-              ▼
-┌─────────────────────────┐
-│   Supabase              │
-│   PostgreSQL + Auth     │
-│   Row Level Security    │
-└─────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│                       Browser (Client)                    │
+│  ┌────────────┐  ┌────────────┐  ┌────────────────────┐  │
+│  │ React 19   │  │ Zustand    │  │ Google Maps JS API │  │
+│  │ Components │  │ Stores     │  │ + Places + Drawing │  │
+│  └─────┬──────┘  └─────┬──────┘  └──────────┬─────────┘  │
+│        └────────────────┴────────────────────┘            │
+└────────────────────────┬─────────────────────────────────┘
+                         │ HTTPS
+                         │
+┌────────────────────────▼─────────────────────────────────┐
+│                  Vercel Edge / Node                       │
+│  ┌──────────────────┐  ┌──────────────────────────────┐  │
+│  │ Next.js App      │  │ Route Handlers /api/*        │  │
+│  │ Router (RSC+SC)  │  │ - Places / Directions Proxy  │  │
+│  └────────┬─────────┘  │ - Maps / Points / Days       │  │
+│           │            │ - Rate Limit (Edge Config)   │  │
+│           │            └──────────┬───────────────────┘  │
+└───────────┼───────────────────────┼──────────────────────┘
+            │                       │
+   ┌────────▼──────────┐  ┌─────────▼────────────────┐
+   │  Supabase         │  │  Google Maps Platform     │
+   │  - Auth           │  │  - Places API (New)       │
+   │  - Postgres + RLS │  │  - Directions API         │
+   │  - Realtime       │  │  - Geocoding API          │
+   │  - Storage        │  └───────────────────────────┘
+   └───────────────────┘
+            │
+   ┌────────▼──────┐
+   │ Sentry        │
+   │ (error track) │
+   └───────────────┘
 ```
 
-### 2.2 地図・外部 API 処理
-
-```
-Browser ←── Mapbox Tile Server（地図タイル）
-Browser ←── Mapbox Geocoding API（場所検索）
-Browser ←── Mapbox Directions API（道路ルート取得）
-Browser ←── Supabase（マップ・日程・ポイントデータ）
-Browser：flyTo アニメーション処理（ローカル）
-```
-
-Directions API は MapEditor がマウント後・ポイント変更時に非同期で各日程ごとにフェッチする。失敗時は直線フォールバック。
-
----
-
-## 3. ディレクトリ構成
+### 2.2 ディレクトリ構成
 
 ```
 via/
 ├── app/
-│   ├── page.tsx                   # ランディングページ
-│   ├── layout.tsx                 # ルートレイアウト
-│   ├── globals.css                # グローバルスタイル
+│   ├── (marketing)/             # ランディング・料金・FAQ
 │   ├── auth/
-│   │   ├── login/page.tsx         # メール/パスワード + Google OAuth
-│   │   ├── register/page.tsx      # Google OAuth 優先 + メール登録
-│   │   ├── reset-password/page.tsx
-│   │   ├── callback/route.ts      # OAuth コールバック
-│   │   └── actions.ts             # signIn / signUp / signOut
+│   │   ├── login/
+│   │   ├── register/
+│   │   └── callback/
 │   ├── maps/
-│   │   ├── page.tsx               # マイマップ一覧（カードグリッド）
-│   │   ├── actions.ts             # createMap / updateMap / deleteMap
-│   │   ├── new/page.tsx           # マップ作成フォーム
+│   │   ├── page.tsx             # マップ一覧（RSC）
+│   │   ├── new/page.tsx
 │   │   └── [id]/
-│   │       ├── page.tsx           # マップエディタ（days・lines も取得）
-│   │       ├── view/page.tsx      # ビューアモード（days 取得）
-│   │       ├── settings/
-│   │       │   ├── page.tsx       # 設定（Server Component、DB から初期値取得）
-│   │       │   └── MapSettingsForm.tsx # 設定フォーム（Client Component）
-│   │       ├── checklist/
-│   │       │   └── page.tsx       # チェックリスト
-│   │       └── actions.ts         # ポイント・日程・ライン・チェックリスト操作
-│   ├── shared/[token]/page.tsx    # 公開共有マップ（days 取得）
-│   ├── settings/page.tsx          # アカウント設定
-│   ├── privacy/page.tsx
-│   └── terms/page.tsx
-│
+│   │       ├── page.tsx         # エディタ（RSC + ClientShell）
+│   │       ├── settings/page.tsx
+│   │       └── checklist/page.tsx
+│   ├── m/[slug]/page.tsx        # 公開ビューア
+│   ├── embed/[id]/page.tsx      # iframe 軽量ビューア
+│   └── api/                     # Route Handlers
+│       ├── places/
+│       ├── directions/
+│       ├── maps/
+│       └── ...
 ├── components/
 │   ├── maps/
-│   │   ├── MapEditor.tsx          # メインエディタ（Client Component）
-│   │   │                          # 場所検索・日程管理・描画ツール・
-│   │   │                          # Directions API・ポップアップ含む
-│   │   ├── MapViewer.tsx          # ビューアモード（Client Component）
-│   │   │                          # デスクトップ左パネル + 右地図
-│   │   ├── PointPanel.tsx         # ポイント追加・編集パネル（Client Component）
-│   │   │                          # カテゴリ・時刻・費用・カラーピッカー含む
-│   │   ├── PointList.tsx          # ポイント一覧（旧、現在は MapEditor 内に統合）
-│   │   └── ChecklistEditor.tsx    # チェックリスト編集（Client Component）
-│   ├── layout/
-│   │   ├── Header.tsx             # ヘッダー（Server Component）
-│   │   └── MobileMenuButton.tsx   # モバイルメニュー（Client Component）
-│   ├── auth/
-│   │   └── SignOutButton.tsx      # ログアウトボタン（Client Component）
-│   └── ui/
-│       ├── Button.tsx             # プライマリ blue-600
-│       ├── Input.tsx
-│       ├── Card.tsx
-│       ├── EmptyState.tsx
-│       └── SkeletonLoader.tsx
-│
+│   │   ├── MapEditor.tsx        # エディタの ClientShell
+│   │   ├── MapViewer.tsx
+│   │   ├── GoogleMapCanvas.tsx  # @vis.gl/react-google-maps ラッパ
+│   │   ├── ModeToggle.tsx       # 👁/📍/✏️/📏
+│   │   ├── DraftBanner.tsx      # 「未保存の地点」バナー
+│   │   ├── PointSidebar.tsx
+│   │   ├── PointPanel.tsx       # スライドオーバー
+│   │   ├── DayList.tsx
+│   │   ├── DirectionsLayer.tsx
+│   │   ├── DrawingLayer.tsx
+│   │   └── PlacesAutocomplete.tsx
+│   └── ui/                      # shadcn/ui
 ├── lib/
-│   ├── auth.ts                    # getCurrentUser ヘルパー
-│   ├── utils.ts                   # cn() ユーティリティ
-│   └── supabase/
-│       ├── client.ts              # クライアントサイド Supabase
-│       ├── server.ts              # サーバーサイド Supabase（cookie 読み書き）
-│       └── middleware.ts          # 認証ミドルウェア（/maps, /settings を保護）
-│
-├── types/index.ts                 # 型定義・DAY_COLORS・getDayColor・getCategoryIcon
-├── middleware.ts                  # Next.js ミドルウェア
-└── supabase/migrations/
-    ├── 20260517000001_initial_schema.sql   # maps, points テーブル
-    ├── 20260517000002_rls_policies.sql     # RLS ポリシー
-    ├── 20260519000003_increment_rpc.sql    # order_index RPC
-    ├── 20260521000004_mappin_schema.sql    # マップピン関連
-    ├── 20260523000005_days_and_checklist.sql # map_days・checklist_items・points 拡張
-    └── 20260523000006_google_mymaps_features.sql # map_lines・marker_color
+│   ├── supabase/
+│   │   ├── client.ts
+│   │   ├── server.ts
+│   │   └── middleware.ts
+│   ├── google/
+│   │   ├── places.ts            # サーバー側 Places ラッパ
+│   │   ├── directions.ts
+│   │   └── geocoding.ts
+│   ├── stores/                  # Zustand
+│   │   ├── editorStore.ts
+│   │   ├── draftStore.ts
+│   │   └── modeStore.ts
+│   ├── api/                     # フロント側 API クライアント
+│   └── utils/
+├── types/
+│   ├── db.ts                    # Supabase 生成型
+│   └── domain.ts                # ドメイン型
+├── supabase/
+│   └── migrations/
+└── docs/
 ```
 
 ---
 
-## 4. データフロー
+## 3. データモデル
 
-### 4.1 マップ作成フロー
-
-```
-1. /maps/new ページ（Server Component）をレンダリング
-2. ユーザーがタイトル・説明を入力して送信
-3. createMap Server Action が呼ばれる
-   ├── supabase.auth.getUser() で認証確認
-   ├── supabase.from('maps').insert() でDB挿入
-   └── redirect('/maps/{新しいID}') でエディタへ
-4. /maps/[id] ページ（Server Component）が maps・points・map_days・map_lines を取得
-5. MapEditor（Client Component）に渡してレンダリング
-```
-
-### 4.2 ポイント追加フロー
+### 3.1 ER 図（概念）
 
 ```
-1. MapEditor 上で地図をクリック または 場所検索から選択
-2. 緑ピン表示 + PointPanel が開く
-3. ユーザーがタイトル・カテゴリ・日程・時刻・費用・カラーを入力して「追加する」
-4. createPoint Server Action が呼ばれる
-   ├── 現在の最大 order_index を取得
-   └── supabase.from('points').insert() でDB挿入（day_id・start_time・end_time・cost・marker_color・category 含む）
-5. 楽観的更新：クライアントの points state に追加
-6. Directions API を再フェッチ（該当日程のルートを更新）
+auth.users (Supabase Auth)
+   │ 1
+   │
+   * profiles
+   │ 1
+   │
+   * maps ────── 1..* map_collaborators
+   │ 1                  │
+   │                    └── auth.users
+   ├── 1..* map_days
+   │     │ 1
+   │     │
+   │     * points (day_id NULL 可 = 未割当)
+   │
+   ├── 1..* map_lines (描画)
+   ├── 1..* checklist_items
+   ├── 1..* map_invites
+   └── 1..* map_activity_log
 ```
 
-### 4.3 Mapbox Directions API フロー
+### 3.2 テーブル定義
 
-```
-MapEditor マウント後 or pointsByDay 変化を検知
-→ 各日程（map_day）ごとに処理
-  ├── 日程内のポイントが 2つ未満 → ルートデータをクリア（直線フォールバック）
-  └── 2つ以上 →
-      GET https://api.mapbox.com/directions/v5/mapbox/driving/
-          {lng1,lat1;lng2,lat2;...}
-          ?geometries=geojson&overview=full&access_token={token}
-      ├── 成功 → routeDataByDay[day.id] に geometry・distance・duration を保存
-      │         → Mapbox Source/Layer で実際の道路ルートを描画
-      │         → Day ヘッダーに距離・所要時間を表示
-      └── 失敗 → null のまま → 破線の直線フォールバックで描画
-```
+#### `profiles`
+| カラム | 型 | 制約 | 説明 |
+|------|----|------|------|
+| id | uuid | PK, FK auth.users | |
+| display_name | text | | |
+| avatar_url | text | | |
+| created_at | timestamptz | default now() | |
 
-### 4.4 描画ライン保存フロー
+#### `maps`
+| カラム | 型 | 制約 | 説明 |
+|------|----|------|------|
+| id | uuid | PK | |
+| owner_id | uuid | FK profiles.id | |
+| slug | text | unique | 公開 URL 用 |
+| title | text | not null | |
+| description | text | | |
+| cover_url | text | | |
+| is_public | bool | default false | |
+| default_travel_mode | text | default 'DRIVE' | |
+| created_at / updated_at | timestamptz | | |
+| version | int | default 1 | 楽観ロック用 |
 
-```
-1. 「✏️ ライン」ボタンで drawMode ON
-2. ユーザーが地図をクリックするたびに drawingCoords に [lng, lat] を追加
-3. 描画中のラインを Mapbox Source/Layer でリアルタイムプレビュー
-4. 「完了」ボタン または ダブルクリックで確定
-5. createLine Server Action が呼ばれる
-   └── supabase.from('map_lines').insert() でDB挿入
-6. lines state に追加 → 地図上に永続描画
-```
+#### `map_days`
+| カラム | 型 | 制約 | 説明 |
+|------|----|------|------|
+| id | uuid | PK | |
+| map_id | uuid | FK maps.id ON DELETE CASCADE | |
+| title | text | | "1日目" など |
+| date | date | | |
+| color | text | default '#3b82f6' | hex |
+| order_index | int | not null | |
+| created_at | timestamptz | | |
 
-### 4.5 ビューアナビゲーションフロー
+#### `points`
+| カラム | 型 | 制約 | 説明 |
+|------|----|------|------|
+| id | uuid | PK | |
+| map_id | uuid | FK maps.id ON DELETE CASCADE | |
+| day_id | uuid | FK map_days.id ON DELETE SET NULL | NULL = 未割当 |
+| place_id | text | | Google Place ID（任意） |
+| title | text | not null | |
+| description | text | | |
+| lng / lat | double precision | not null | |
+| marker_color | text | default '#3b82f6' | |
+| category | text | | "restaurant" "hotel" など |
+| start_time / end_time | time | | |
+| cost | numeric | | |
+| image_url | text | | |
+| order_index | int | not null | |
+| created_at / updated_at | timestamptz | | |
 
-```
-1. /maps/[id]/view ページがサーバーでポイント・日程を取得
-2. MapViewer（Client Component）に渡す
-3. デスクトップ：左パネルに日程グループ別ポイント一覧 + 右地図
-4. Mapbox 地図がロード完了 → 最初のポイントに flyTo
-5. ユーザーが「→」を押す
-   ├── currentIndex を +1
-   ├── desktopMapRef / mobileMapRef 両方に flyTo を発行
-   └── 左パネルの選択・ポイント詳細を切り替え
-```
-
----
-
-## 5. 認証フロー
-
-### 5.1 保護パス
-
-`lib/supabase/middleware.ts` で定義：
-
-```typescript
-const PROTECTED_PATHS = ["/maps", "/settings"];
-```
-
-未認証ユーザーは `/auth/login?redirectTo=元のパス` にリダイレクト。
-
-### 5.2 Google OAuth フロー
-
-```
-1. ログイン/登録ページの「Google でログイン」ボタンをクリック
-2. supabase.auth.signInWithOAuth({ provider: 'google', redirectTo: '/auth/callback?next=/maps' })
-3. Google OAuth ページに遷移
-4. 認証後、/auth/callback?code=xxx&next=/maps に戻る
-5. exchangeCodeForSession(code) でセッション確立・Cookie セット
-6. redirect('/maps') でマイマップへ
-```
-
----
-
-## 6. Supabase 設計
-
-### 6.1 テーブル
-
-| テーブル | 主な用途 |
-|---------|---------|
-| `auth.users` | Supabase Auth が管理する認証ユーザー |
-| `public.maps` | ユーザーが作成したマップ |
-| `public.map_days` | マップの日程（Day 1・Day 2…） |
-| `public.points` | マップ上のポイント（日程・時刻・費用・カテゴリ・カラー含む） |
-| `public.map_lines` | ユーザーが描画したライン |
-| `public.checklist_items` | チェックリスト項目（持ち物・やること） |
-
-### 6.2 points テーブルのカラム（拡張後）
-
+#### `map_lines`
 | カラム | 型 | 説明 |
-|--------|-----|------|
-| id | UUID | PK |
-| map_id | UUID | FK → maps |
-| day_id | UUID | FK → map_days（NULL = 日程なし） |
-| title | TEXT | ポイント名 |
-| description | TEXT | 説明 |
-| lat / lng | FLOAT8 | 座標 |
-| order_index | INT | 表示順 |
-| start_time | TIME | 開始時刻 |
-| end_time | TIME | 終了時刻 |
-| cost | INT | 費用（円） |
-| category | TEXT | spot / restaurant / hotel / transport |
-| marker_color | TEXT | カスタムマーカー色（NULL = 日程カラーに従う） |
-| images | JSONB | PointImage[] |
-| created_at | TIMESTAMPTZ | — |
+|------|----|------|
+| id | uuid PK | |
+| map_id | uuid FK | |
+| name | text | |
+| coordinates | jsonb | `[[lng, lat], ...]` |
+| color | text | hex |
+| width | int | px |
+| type | text | 'line' \| 'polygon' |
 
-### 6.3 トリガー
+#### `checklist_items`
+| カラム | 型 | 説明 |
+|------|----|------|
+| id | uuid PK | |
+| map_id | uuid FK | |
+| type | text | 'packing' \| 'todo' |
+| content | text | |
+| is_done | bool | |
+| assignee_id | uuid | nullable, FK profiles |
+| order_index | int | |
 
-- `maps` の `updated_at` を更新するトリガー（`update_updated_at` 関数）
+#### `map_collaborators`
+| カラム | 型 | 説明 |
+|------|----|------|
+| id | uuid PK | |
+| map_id | uuid FK | |
+| user_id | uuid FK auth.users | |
+| role | text | 'viewer' \| 'commenter' \| 'editor' |
+| created_at | timestamptz | |
+| UNIQUE (map_id, user_id) | | |
 
-### 6.4 インデックス
+#### `map_invites`
+| カラム | 型 | 説明 |
+|------|----|------|
+| id | uuid PK | |
+| map_id | uuid FK | |
+| token | text unique | URL に埋め込む招待トークン |
+| role | text | 付与する権限 |
+| expires_at | timestamptz | |
+| created_by | uuid | |
+
+#### `place_cache`（Place Details キャッシュ）
+| カラム | 型 | 説明 |
+|------|----|------|
+| place_id | text PK | |
+| payload | jsonb | Places Details レスポンス |
+| fetched_at | timestamptz | |
+
+#### `route_cache`（Directions キャッシュ）
+| カラム | 型 | 説明 |
+|------|----|------|
+| key | text PK | sha256(waypoints + mode) |
+| payload | jsonb | |
+| fetched_at | timestamptz | |
+
+#### `map_activity_log`
+| カラム | 型 | 説明 |
+|------|----|------|
+| id | uuid PK | |
+| map_id | uuid FK | |
+| actor_id | uuid | |
+| action | text | 'point.create' 'point.update' ... |
+| target_id | uuid | |
+| diff | jsonb | |
+| created_at | timestamptz | |
+
+### 3.3 RLS ポリシー
+
+すべてのテーブルに以下の方針で RLS を設定：
 
 ```sql
-idx_maps_user_id         -- マイマップ一覧の高速化
-idx_maps_share_token     -- 共有リンクアクセスの高速化
-idx_points_map_id        -- マップのポイント取得の高速化
-idx_points_order         -- 並び順取得の高速化
-idx_map_days_map_id      -- 日程取得の高速化
-idx_map_lines_map_id     -- ライン取得の高速化
-idx_checklist_map_id     -- チェックリスト取得の高速化
+-- maps: 所有者または共同編集者（権限に応じ）のみ
+CREATE POLICY "maps_select" ON maps FOR SELECT USING (
+  is_public = true
+  OR owner_id = auth.uid()
+  OR EXISTS (SELECT 1 FROM map_collaborators WHERE map_id = id AND user_id = auth.uid())
+);
+
+CREATE POLICY "maps_update" ON maps FOR UPDATE USING (
+  owner_id = auth.uid()
+  OR EXISTS (SELECT 1 FROM map_collaborators WHERE map_id = id AND user_id = auth.uid() AND role = 'editor')
+);
 ```
 
+points / map_days / map_lines / checklist_items は `maps` への参照経由で同じ判定。
+
 ---
 
-## 7. 型定義（types/index.ts）
+## 4. クライアント状態管理（v3.0 の肝）
 
-```typescript
-export interface TravelMap { id, user_id, title, description, is_public, share_token, created_at, updated_at }
+### 4.1 状態の分離原則
 
-export interface MapDay {
-  id: string; map_id: string; day_number: number;
-  date: string | null; title: string | null; created_at: string;
+v2.0 では「pending pin・編集中・選択中・ホバー中」がコンポーネントローカル state でぐちゃっと管理されていた。v3.0 では **5 つの独立した Zustand store** に分離する。
+
+| Store | 責務 | 状態 |
+|-------|------|------|
+| `modeStore` | 操作モード | `mode: 'view' \| 'add' \| 'draw' \| 'measure'` |
+| `draftStore` | 下書きピン | `draft: { lng, lat, placeId? } \| null` |
+| `editorStore` | 編集中ポイント | `editingPointId: string \| null` |
+| `selectionStore` | 選択/ハイライト | `selectedPointId, hoveredPointId, focusedDayId` |
+| `mapStore` | 地図表示 | `center, zoom, style, bounds` |
+
+### 4.2 状態と UI の対応
+
+| 状態 | 影響する UI |
+|------|----------|
+| `mode === 'add'` | カーソル=crosshair、地図クリックで draft 作成 |
+| `mode === 'view'` | 地図クリックは点選択のみ、draft 作成しない |
+| `draft !== null` | 上部 DraftBanner 表示、緑ピン点滅 |
+| `editingPointId` | PointPanel スライドオーバー表示 |
+| `selectedPointId` | マーカー強調 + サイドバー該当行ハイライト |
+
+### 4.3 重要：相互ロックなし
+
+```ts
+// v2.0 ❌
+if (editingPointId) {
+  // 地図クリックを無視
+  return;
 }
 
-export interface MapPoint {
-  id, map_id, title, description, lat, lng, order_index, images, created_at,
-  day_id: string | null;
-  start_time: string | null;
-  end_time: string | null;
-  cost: number;
-  marker_color: string | null;
+// v3.0 ✅
+onMapClick(latlng) {
+  if (mode === 'add') {
+    draftStore.setDraft({ ...latlng });   // editingPointId とは独立
+  } else {
+    // 地点選択など別動作
+  }
 }
-
-export interface MapLine {
-  id, map_id, day_id, name, color, width,
-  coordinates: [number, number][]; // [lng, lat][]
-  created_at: string;
-}
-
-export interface ChecklistItem {
-  id, map_id, label, is_checked, order_index, created_at,
-  category: 'packing' | 'todo';
-}
-
-export const DAY_COLORS = ['#3B82F6','#10B981','#F59E0B','#8B5CF6','#EF4444','#06B6D4','#F97316','#EC4899'];
-export function getDayColor(dayNumber: number): string { return DAY_COLORS[(dayNumber - 1) % DAY_COLORS.length]; }
-export function getCategoryIcon(category: string): string { /* spot/restaurant/hotel/transport */ }
 ```
 
+### 4.4 楽観更新パターン
+
+```ts
+// ポイント更新の例
+async function updatePoint(id, patch) {
+  const prev = editorStore.points.find(p => p.id === id);
+  editorStore.applyLocal(id, patch);            // 即時 UI 反映
+  try {
+    const saved = await api.patchPoint(id, patch);
+    editorStore.replace(id, saved);
+  } catch (e) {
+    editorStore.applyLocal(id, prev);           // ロールバック
+    toast.error('保存に失敗しました', { action: 'retry' });
+  }
+}
+```
+
+### 4.5 競合検出（共同編集）
+
+- 各リクエストに `If-Match: <version>` ヘッダ送信
+- サーバーは `version` 不一致なら 409 を返す
+- クライアントは 409 で「他のユーザーが先に保存しました。再読込しますか？」モーダル
+
 ---
 
-## 8. 外部依存サービス
+## 5. リアルタイム同期
 
-| サービス | 用途 | 無料枠 |
-|---------|------|-------|
-| Supabase | DB + Auth | 500MB DB、50,000 MAU まで |
-| Vercel | ホスティング | Hobby プランで個人利用は十分 |
-| Mapbox | 地図タイル・Geocoding・Directions API | 月 50,000 マップロードまで無料 |
-| Sentry | エラー監視 | 5,000 イベント/月まで無料 |
+### 5.1 Supabase Realtime
+
+```ts
+const channel = supabase
+  .channel(`map:${mapId}`)
+  .on('postgres_changes', { event: '*', schema: 'public', table: 'points', filter: `map_id=eq.${mapId}` },
+    payload => editorStore.applyRemote(payload))
+  .on('postgres_changes', { event: '*', table: 'map_days', filter: `map_id=eq.${mapId}` },
+    payload => editorStore.applyRemote(payload))
+  .subscribe();
+```
+
+### 5.2 自分の更新の echo 抑制
+
+- 各楽観更新時に `clientEventId` を生成して送信
+- Realtime 受信時、自分の `clientEventId` なら無視
 
 ---
 
-## 9. 運用コスト試算（月次）
+## 6. Google Maps Platform 統合
 
-| 項目 | MAU 1,000 | MAU 10,000 | 備考 |
-|------|-----------|------------|------|
-| Supabase | ¥0 | ¥3,500 | Free → Pro |
-| Vercel | ¥0 | ¥0 | Hobby 枠内 |
-| Mapbox | ¥0 | ¥0〜 | 月 50,000 ロードまで無料 |
-| ドメイン | ¥100 | ¥100 | — |
-| **合計** | **¥100** | **¥3,600〜** | |
+### 6.1 ライブラリ選定
+
+| 候補 | 採用 | 理由 |
+|------|------|------|
+| `@react-google-maps/api` | ✗ | メンテ停滞気味 |
+| **`@vis.gl/react-google-maps`** | **✓** | Google 公式、React 19 対応 |
+| `@googlemaps/js-api-loader` | △ | 直接利用は冗長 |
+
+### 6.2 Advanced Markers
+
+```tsx
+<AdvancedMarker position={{ lat, lng }} onClick={...}>
+  <Pin background={point.marker_color} glyphColor="#fff" borderColor="#fff" />
+</AdvancedMarker>
+```
+
+Advanced Markers 利用には **Cloud Map ID** が必須。Map Style は Cloud Console で管理。
+
+### 6.3 Polyline（Directions ルート表示）
+
+```tsx
+<Polyline
+  encodedPath={route.encodedPolyline}
+  strokeColor={day.color}
+  strokeWeight={4}
+  strokeOpacity={0.85}
+/>
+```
+
+### 6.4 Drawing Manager（描画モード）
+
+`google.maps.drawing.DrawingManager` を `mode === 'draw'` 時のみマウント。
+
+---
+
+## 7. ルーティング設計
+
+| パス | 認証 | レンダリング |
+|------|------|----------|
+| `/` | 不要 | Static（マーケ） |
+| `/auth/*` | 不要 | SSR |
+| `/maps` | 必須 | RSC（fetch with cookie） |
+| `/maps/[id]` | 必須 | RSC + ClientShell |
+| `/maps/[id]/settings` | 必須 | RSC |
+| `/maps/[id]/checklist` | 必須 | RSC |
+| `/m/[slug]` | 不要 | RSC + ISR 60s |
+| `/embed/[id]` | 不要 | RSC + ISR 60s（最小 JS） |
+
+---
+
+## 8. パフォーマンス設計
+
+### 8.1 マーカー大量描画
+
+- 100 個以下：通常 Advanced Markers
+- 100-500 個：Marker Clustering (`@googlemaps/markerclusterer`)
+- 500 個超：仮想化サイドバー + ビューポート内のみ描画
+
+### 8.2 バンドル最適化
+
+- 地図 / 描画関連は `next/dynamic` で遅延ロード（マーケページ含まれない）
+- Tailwind v4 + Lightning CSS で CSS 最小化
+
+### 8.3 画像最適化
+
+- `next/image` 利用
+- Supabase Storage は WebP 自動変換 ON
+
+---
+
+## 9. 監視・ログ
+
+### 9.1 Sentry
+
+- クライアント・サーバー両方で初期化済み
+- リリースタグ＝Vercel deployment SHA
+- パフォーマンストレース ON（サンプリング 10%）
+
+### 9.2 ログ
+
+- Vercel Functions Log を Datadog に転送（Phase 2）
+- API レスポンスタイムを `/api/_metrics` に集約
+
+---
+
+## 10. デプロイ・CI/CD
+
+| 環境 | URL | デプロイトリガ |
+|------|-----|--------------|
+| Production | https://viamaps.app | main ブランチ push |
+| Preview | `*-viamaps.vercel.app` | PR 作成・更新 |
+| Local | http://localhost:3000 | `npm run dev` |
+
+CI: Vercel + GitHub Actions
+- `pnpm typecheck`
+- `pnpm test` (Vitest)
+- `pnpm test:e2e` (Playwright, PR only)
+- `pnpm lint`
+
+---
+
+**Version 履歴**
+- v1.0 (2026-04)
+- v2.0 (2026-05-22)
+- **v3.0 (2026-05-23): Google Maps Platform 統合、Zustand 5 ストア分離、楽観更新+競合検出、共同編集対応**

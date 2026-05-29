@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import type { MapPoint, PointImage, MapDay } from "@/types";
 import { getDayColor, getCategoryIcon } from "@/types";
+import type { PlaceDetails } from "@/lib/stores/draftStore";
 
 const MARKER_COLORS = [
   "#3B82F6","#10B981","#F59E0B","#8B5CF6","#EF4444",
@@ -23,6 +24,8 @@ interface PointPanelProps {
   isNew?: boolean;
   days: MapDay[];
   defaultDayId?: string | null;
+  placeDetails?: PlaceDetails | null;
+  saveTrigger?: number;
   onSave: (data: {
     title: string;
     description: string;
@@ -38,7 +41,7 @@ interface PointPanelProps {
   onClose: () => void;
 }
 
-export function PointPanel({ point, isNew, days, defaultDayId, onSave, onDelete, onClose }: PointPanelProps) {
+export function PointPanel({ point, isNew, days, defaultDayId, placeDetails, saveTrigger, onSave, onDelete, onClose }: PointPanelProps) {
   const [title,          setTitle]          = useState(point?.title ?? "");
   const [description,    setDescription]    = useState(point?.description ?? "");
   const [images,         setImages]         = useState<PointImage[]>(point?.images ?? []);
@@ -52,6 +55,7 @@ export function PointPanel({ point, isNew, days, defaultDayId, onSave, onDelete,
   const [cost,           setCost]           = useState(point?.cost ?? 0);
   const [category,       setCategory]       = useState(point?.category ?? "spot");
   const [markerColor,    setMarkerColor]    = useState<string | null>(point?.marker_color ?? null);
+  const prevSaveTrigger = useRef(0);
 
   useEffect(() => {
     setTitle(point?.title ?? "");
@@ -68,6 +72,15 @@ export function PointPanel({ point, isNew, days, defaultDayId, onSave, onDelete,
     setMarkerColor(point?.marker_color ?? null);
   }, [point, defaultDayId]);
 
+  // Place Detailsが来たとき、新規かつtitleが空なら自動set
+  useEffect(() => {
+    if (isNew && placeDetails) {
+      if (!title && placeDetails.name) setTitle(placeDetails.name);
+      if (!description && placeDetails.description) setDescription(placeDetails.description);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [placeDetails, isNew]);
+
   const handleAddImage = () => {
     if (!newImageUrl.trim()) return;
     setImages(prev => [...prev, { url: newImageUrl.trim(), caption: newImageCaption || null }]);
@@ -76,7 +89,7 @@ export function PointPanel({ point, isNew, days, defaultDayId, onSave, onDelete,
   };
   const handleRemoveImage = (i: number) => setImages(prev => prev.filter((_, idx) => idx !== i));
 
-  const handleSave = async () => {
+  const handleSave = useCallback(async () => {
     if (!title.trim()) { setError("タイトルを入力してください"); return; }
     setSaving(true);
     setError("");
@@ -87,9 +100,19 @@ export function PointPanel({ point, isNew, days, defaultDayId, onSave, onDelete,
         cost, category, marker_color: markerColor,
       });
       onClose();
-    } catch { setError("保存に失敗しました"); }
+    } catch (e) {
+      setError(e instanceof Error && e.message ? e.message : "保存に失敗しました");
+    }
     finally { setSaving(false); }
-  };
+  }, [title, description, images, dayId, startTime, endTime, cost, category, markerColor, onSave, onClose]);
+
+  // saveTrigger が変化したら保存を実行（Cmd+S / DraftBanner 保存ボタン）
+  useEffect(() => {
+    if (saveTrigger !== undefined && saveTrigger > 0 && saveTrigger !== prevSaveTrigger.current) {
+      prevSaveTrigger.current = saveTrigger;
+      handleSave();
+    }
+  }, [saveTrigger, handleSave]);
 
   const handleDelete = async () => {
     if (!onDelete) return;
@@ -109,13 +132,45 @@ export function PointPanel({ point, isNew, days, defaultDayId, onSave, onDelete,
       </div>
 
       {/* フォーム */}
-      <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
+      <div className="min-h-0 flex-1 overflow-y-auto p-4 flex flex-col gap-4">
         {isNew && (
           <div className="rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-700">
             💡 地図をクリックすると緑のピンが移動します
           </div>
         )}
         {error && <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</div>}
+
+        {/* Google Places 情報バッジ */}
+        {isNew && placeDetails && (
+          <div className="rounded-xl border border-blue-100 bg-blue-50 p-3 flex flex-col gap-1.5">
+            <p className="text-xs font-semibold text-blue-700">📍 Google Placesから取得した情報</p>
+            {placeDetails.rating != null && (
+              <p className="text-xs text-gray-700">⭐ {placeDetails.rating.toFixed(1)}</p>
+            )}
+            {placeDetails.phone && (
+              <p className="text-xs text-gray-600">📞 {placeDetails.phone}</p>
+            )}
+            {placeDetails.address && (
+              <p className="text-xs text-gray-500 truncate">🏠 {placeDetails.address}</p>
+            )}
+            {placeDetails.openingHours && placeDetails.openingHours.length > 0 && (
+              <details className="text-xs text-gray-600">
+                <summary className="cursor-pointer text-blue-600">🕐 営業時間を見る</summary>
+                <ul className="mt-1 pl-2 space-y-0.5">
+                  {placeDetails.openingHours.map((line, i) => (
+                    <li key={i}>{line}</li>
+                  ))}
+                </ul>
+              </details>
+            )}
+            {placeDetails.website && (
+              <a href={placeDetails.website} target="_blank" rel="noopener noreferrer"
+                className="text-xs text-blue-500 underline truncate block">
+                🌐 {placeDetails.website}
+              </a>
+            )}
+          </div>
+        )}
 
         <Input id="point-title" label="タイトル *" value={title}
           onChange={e => setTitle(e.target.value)} placeholder="例: 東京タワー" maxLength={100} />

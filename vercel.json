@@ -1,11 +1,5 @@
 {
   "installCommand": "npm ci --legacy-peer-deps",
-  "crons": [
-    {
-      "path": "/api/cron/reset-daily-ai",
-      "schedule": "0 15 * * *"
-    }
-  ],
   "headers": [
     {
       "source": "/api/(.*)",

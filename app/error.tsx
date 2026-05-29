@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import Link from "next/link";
 import * as Sentry from "@sentry/nextjs";
 
 export default function Error({
@@ -28,12 +29,12 @@ export default function Error({
         >
           再試行する
         </button>
-        <a
+        <Link
           href="/maps"
           className="rounded-full border border-gray-200 px-6 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition"
         >
           マイマップへ
-        </a>
+        </Link>
       </div>
     </main>
   );
